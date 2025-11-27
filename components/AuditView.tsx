@@ -4,7 +4,7 @@ import { AuditResult, Sentiment, AuditSession, AUDIENCE_GROUPS, AppSettings, Kno
 import { performCulturalAudit, generateAlternativeImage, processImageForGemini } from '../services/geminiService';
 import ImageAnnotator from './ImageAnnotator';
 import KnowledgeDrawer from './KnowledgeDrawer';
-import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, Check, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight } from 'lucide-react';
+import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, Check, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight, Plus } from 'lucide-react';
 
 interface AuditViewProps {
   settings: AppSettings;
@@ -30,7 +30,7 @@ const AuditView: React.FC<AuditViewProps> = ({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   
   // Multi-select Region State
-  const [selectedRegions, setSelectedRegions] = useState<string[]>(["Middle East"]);
+  const [selectedRegions, setSelectedRegions] = useState<string[]>(["US"]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -128,9 +128,25 @@ const AuditView: React.FC<AuditViewProps> = ({
       setSelectedId(null);
   };
 
+  const deleteHistoryItem = (e: React.MouseEvent, id: string) => {
+      e.stopPropagation();
+      const updated = auditHistory.filter(h => h.id !== id);
+      setAuditHistory(updated);
+      localStorage.setItem('cultural_audit_history', JSON.stringify(updated));
+  };
+
   const clearHistory = () => {
       setAuditHistory([]);
       localStorage.removeItem('cultural_audit_history');
+  };
+
+  const handleReset = () => {
+    setImageBase64(null);
+    setImageFile(null);
+    setResult(null);
+    setGeneratedAlternatives({});
+    setSelectedId(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const runAudit = async () => {
@@ -156,9 +172,8 @@ const AuditView: React.FC<AuditViewProps> = ({
       );
       
       setResult(data);
-      if (data.annotations && data.annotations.length > 0) {
-        setSelectedId(data.annotations[0].id);
-      }
+      // Previously auto-selected first item here. Removed to default to List View.
+      // if (data.annotations && data.annotations.length > 0) { setSelectedId(data.annotations[0].id); }
       
       // Save success to history
       saveToHistory(data, imageBase64, selectedRegions);
@@ -217,10 +232,10 @@ const AuditView: React.FC<AuditViewProps> = ({
                         <div 
                             key={session.id} 
                             onClick={() => restoreSession(session)}
-                            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-excali-purple cursor-pointer hover:bg-gray-50 transition-all group"
+                            className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 hover:border-excali-purple cursor-pointer hover:bg-gray-50 transition-all group relative"
                         >
-                            <img src={session.imageThumbnail} alt="Thumb" className="w-12 h-12 rounded object-cover border border-gray-100 bg-gray-100" />
-                            <div className="overflow-hidden">
+                            <img src={session.imageThumbnail} alt="Thumb" className="w-12 h-12 rounded object-cover border border-gray-100 bg-gray-100 flex-shrink-0" />
+                            <div className="overflow-hidden flex-1 min-w-0 pr-6">
                                 <div className="text-xs text-gray-400 font-bold mb-0.5">
                                     {new Date(session.timestamp).toLocaleDateString()}
                                 </div>
@@ -231,13 +246,20 @@ const AuditView: React.FC<AuditViewProps> = ({
                                     {session.result.annotations?.length || 0} findings
                                 </div>
                             </div>
+                            <button 
+                                onClick={(e) => deleteHistoryItem(e, session.id)}
+                                className="absolute right-2 top-2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                title="Delete Scan"
+                            >
+                                <Trash2 size={16} />
+                            </button>
                         </div>
                     ))}
                 </div>
                 {auditHistory.length > 0 && (
                     <div className="p-4 border-t border-gray-100">
                         <button onClick={clearHistory} className="w-full flex items-center justify-center gap-2 text-red-500 hover:bg-red-50 p-2 rounded-lg text-sm font-bold transition-colors">
-                            <Trash2 size={16} /> Clear History
+                            <Trash2 size={16} /> Clear All History
                         </button>
                     </div>
                 )}
@@ -350,6 +372,18 @@ const AuditView: React.FC<AuditViewProps> = ({
                         <PanelRight size={20} />
                     </button>
                 )}
+                
+                {/* Reset Button */}
+                {imageBase64 && (
+                    <button
+                        onClick={handleReset}
+                        className="flex-shrink-0 bg-white text-gray-500 hover:text-red-500 hover:bg-red-50 font-hand text-lg px-3 md:px-4 py-2 rounded-md border border-gray-200 hover:border-red-200 shadow-sm transition-all flex items-center gap-2 whitespace-nowrap"
+                        title="Upload New Design"
+                    >
+                        <Eraser size={18} />
+                        <span className="hidden md:inline">Reset</span>
+                    </button>
+                )}
 
                 {/* Action Button */}
                 {imageBase64 && (
@@ -412,10 +446,7 @@ const AuditView: React.FC<AuditViewProps> = ({
                     
                     <div className="absolute top-0 right-0 z-20">
                          <button 
-                            onClick={() => {
-                              setImageBase64(null);
-                              setResult(null);
-                            }}
+                            onClick={handleReset}
                             className="flex items-center gap-2 text-sm font-hand font-bold text-gray-400 hover:text-red-500 bg-white px-3 py-1.5 rounded-lg border border-gray-200 hover:border-red-200 transition-all shadow-sm"
                          >
                             <Eraser size={14} /> Reset

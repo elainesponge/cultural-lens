@@ -312,7 +312,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         className={`group w-full text-left p-3 rounded-lg flex items-start gap-3 transition-colors cursor-pointer relative ${currentSessionId === session.id ? 'bg-white shadow-sm border border-gray-200' : 'hover:bg-gray-100'}`}
                     >
                         <MessageSquare size={18} className={`mt-0.5 flex-shrink-0 ${currentSessionId === session.id ? 'text-excali-purple' : 'text-gray-400'}`} />
-                        <div className="overflow-hidden flex-1 min-w-0">
+                        <div className="overflow-hidden flex-1 min-w-0 pr-6">
                             <div className={`font-hand font-bold text-sm truncate ${currentSessionId === session.id ? 'text-gray-800' : 'text-gray-500'}`}>
                                 {session.title}
                             </div>
@@ -322,7 +322,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         </div>
                         <button 
                             onClick={(e) => deleteSession(e, session.id)}
-                            className="absolute right-2 top-2 p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition-all"
+                            className="absolute right-2 top-2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-all"
+                            title="Delete Chat"
                         >
                             <Trash2 size={14} />
                         </button>
@@ -460,7 +461,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                             <button 
                                 onClick={() => handleLevelChange(ConsultantLevel.FAST)}
                                 className={`flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentSession?.level === ConsultantLevel.FAST ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                                title="Fast Mode"
+                                title="Fast Mode: Extremely concise, practical colors & icons"
                             >
                                 <Zap size={12} className={currentSession?.level === ConsultantLevel.FAST ? "text-yellow-500 fill-yellow-500" : ""} /> 
                                 <span className="hidden md:inline">Fast Mode</span>
@@ -468,7 +469,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                             <button 
                                 onClick={() => handleLevelChange(ConsultantLevel.DEEP)}
                                 className={`flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentSession?.level === ConsultantLevel.DEEP ? 'bg-white text-excali-purple shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                                title="Deep Mode"
+                                title="Deep Mode: Historical context, deep meanings, and metaphors"
                             >
                                 <BookOpen size={12} />
                                 <span className="hidden md:inline">Deep Mode</span>
