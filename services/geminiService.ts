@@ -1,6 +1,5 @@
-
-import { GoogleGenAI, Type, Schema, Part, Content } from "@google/genai";
-import { AuditResult, ConsultantLevel, MoodCardData, Sentiment, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
+import { GoogleGenAI, Part, Content } from "@google/genai";
+import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
 
 /**
  * Helper to Resize and Compress Image for Gemini
@@ -43,10 +42,10 @@ export const processImageForGemini = async (file: File): Promise<{ base64: strin
         const base64 = dataUrl.split(',')[1];
         resolve({ base64, mimeType });
       };
-      img.onerror = (err) => reject(new Error("Failed to load image for processing"));
+      img.onerror = () => reject(new Error("Failed to load image for processing"));
       img.src = event.target?.result as string;
     };
-    reader.onerror = (err) => reject(new Error("Failed to read file"));
+    reader.onerror = () => reject(new Error("Failed to read file"));
     reader.readAsDataURL(file);
   });
 };
@@ -76,8 +75,13 @@ export const uploadKnowledgeFile = async (
       config: { displayName: file.name }
     });
     
-    const fileUri = uploadResult.uri;
-    const name = uploadResult.name; // This is the API name (files/xyz), not display name
+    // Fix: Ensure uri and name are strings (handle undefined from SDK type)
+    if (!uploadResult.uri || !uploadResult.name) {
+        throw new Error("Upload failed: No URI or Name returned from API");
+    }
+
+    const fileUri: string = uploadResult.uri;
+    const name: string = uploadResult.name; // This is the API name (files/xyz), not display name
 
     // 2. Poll until ACTIVE
     let isActive = false;
@@ -470,16 +474,9 @@ export const consultCulturalAgent = async (
     
     let finalText = data.summary || data.textResponse || "Here is the information you requested.";
     
-    // VALIDATION: If no knowledge files exist, do NOT return citedSources.
-    // This prevents the UI from showing the "Knowledge Base" section when no files are actually present.
     let validCitations = data.citedSources || [];
     if (knowledgeFiles.length === 0) {
         validCitations = [];
-    } else {
-        // Optional: We could further strictly filter against actual filenames, 
-        // but checking length is the most critical fix for empty states.
-        // const validNames = knowledgeFiles.map(f => f.name.toLowerCase());
-        // validCitations = validCitations.filter(c => validNames.some(n => c.toLowerCase().includes(n)));
     }
 
     return {

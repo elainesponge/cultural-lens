@@ -1,7 +1,6 @@
-
 import React, { useState } from 'react';
 import { KnowledgeFile } from '../types';
-import { Library, X, FileText, Trash2, Loader2, Upload, Link as LinkIcon, Youtube, Globe, Plus } from 'lucide-react';
+import { Library, X, FileText, Trash2, Loader2, Upload, Youtube, Globe, Plus } from 'lucide-react';
 
 interface KnowledgeDrawerProps {
   isOpen: boolean;
@@ -55,6 +54,12 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
         </h3>
         <button onClick={onClose}><X size={18} className="text-gray-400" /></button>
       </div>
+
+      {description && (
+        <div className="px-4 py-3 bg-blue-50 text-blue-800 text-xs border-b border-blue-100 leading-relaxed">
+          {description}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200">

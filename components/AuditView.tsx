@@ -1,10 +1,9 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { AuditResult, Sentiment, AuditSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { performCulturalAudit, generateAlternativeImage, processImageForGemini } from '../services/geminiService';
 import ImageAnnotator from './ImageAnnotator';
 import KnowledgeDrawer from './KnowledgeDrawer';
-import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, Check, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight, Plus } from 'lucide-react';
+import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight } from 'lucide-react';
 
 interface AuditViewProps {
   settings: AppSettings;
@@ -23,7 +22,7 @@ const AuditView: React.FC<AuditViewProps> = ({
     onRemoveKnowledge, 
     isUploadingKnowledge 
 }) => {
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  // Removed unused imageFile state
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AuditResult | null>(null);
@@ -71,7 +70,6 @@ const AuditView: React.FC<AuditViewProps> = ({
   }, []);
 
   const processUploadedFile = async (file: File) => {
-    setImageFile(file);
     try {
         // Optimize Image (Resize + Compress)
         const { base64, mimeType } = await processImageForGemini(file);
@@ -142,7 +140,6 @@ const AuditView: React.FC<AuditViewProps> = ({
 
   const handleReset = () => {
     setImageBase64(null);
-    setImageFile(null);
     setResult(null);
     setGeneratedAlternatives({});
     setSelectedId(null);
@@ -276,7 +273,6 @@ const AuditView: React.FC<AuditViewProps> = ({
         onAddLink={onAddLink}
         onRemove={onRemoveKnowledge}
         isUploading={isUploadingKnowledge}
-        description="Global Knowledge Base: Upload brand guidelines or compliance PDFs to check designs against specific rules."
       />
 
       {/* LEFT COLUMN: Audience + Canvas */}

@@ -1,7 +1,6 @@
-
 import React, { useEffect, useState } from 'react';
 import { MoodCardData, AppSettings } from '../types';
-import { Calendar, Loader2, Palette, Search, Image as ImageIcon, RotateCw, AlertTriangle } from 'lucide-react';
+import { Calendar, Palette, Search, Image as ImageIcon, RotateCw, AlertTriangle } from 'lucide-react';
 import { generateAlternativeImage } from '../services/geminiService';
 
 const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ data, settings }) => {
