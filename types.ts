@@ -53,6 +53,7 @@ export interface ChatMessage {
   // Source Attribution
   citedSources?: string[]; // List of filenames/links from Knowledge Base used
   groundingMetadata?: any; // Raw Google Search grounding data
+  images?: string[]; // Array of base64 image strings for preview
 }
 
 // RAG / File Search Types
@@ -119,12 +120,18 @@ export const AVAILABLE_MODELS = {
 export const DEFAULT_AUDIT_PROMPT = `Analyze this image for cultural sensitivity specifically for these regions: {{regions}}.
 Identify specific visual elements (colors, symbols, gestures, text).
 
+**TONE & STYLE:**
+- Speak like a friendly, helpful guide.
+- Use simple, everyday words. Avoid academic jargon or complex corporate language.
+- Explain things clearly enough for a 12-year-old or a grandmother to understand.
+- Be direct but kind.
+
 {{ragInstructions}}
 
 For each element found:
 1. Determine if it is a "RISK" (offensive, taboo, confusing) or "RESONANCE" (culturally appropriate, positive).
 2. Provide a bounding box [ymin, xmin, ymax, xmax] normalized to 0-1000 scale.
-3. Explain why.
+3. Explain why using simple language.
 4. If it is a RISK, provide a concrete alternative suggestion and a short prompt to generate that alternative.
 
 STRICT JSON OUTPUT FORMAT (Do NOT include markdown):
@@ -136,18 +143,24 @@ STRICT JSON OUTPUT FORMAT (Do NOT include markdown):
       "label": "Short Label",
       "sentiment": "RISK" | "RESONANCE" | "NEUTRAL",
       "box_2d": { "ymin": number, "xmin": number, "ymax": number, "xmax": number },
-      "description": "Explanation",
+      "description": "Explanation in simple, conversational language.",
       "suggestion": "Fix suggestion (optional)",
       "suggestionPrompt": "Image gen prompt (optional)"
     }
   ]
 }`;
 
-export const DEFAULT_CONSULTANT_PROMPT = `You are a Cultural Consultant Design Assistant.
+export const DEFAULT_CONSULTANT_PROMPT = `You are a friendly Cultural Guide.
 Target Audience: {{audience}}.
 {{modeInstructions}}
 
 {{ragInstructions}}
+
+**TONE & STYLE:**
+- Be human, conversational, and warm. 
+- Use simple language (ELI5 - Explain Like I'm 5). 
+- Avoid big words, academic terms, or corporate speak.
+- If you explain a tradition, use a simple analogy if it helps.
 
 Your goal is to help designers choose colors, symbols, and festivals.
 
@@ -157,7 +170,7 @@ Do not include any conversational preamble.
 
 JSON Structure:
 {
-  "summary": "A single, high-level, concise paragraph answering the user's question. EMBED CITATIONS INLINE here.",
+  "summary": "A single, high-level, conversational paragraph answering the user's question. Use simple words. EMBED CITATIONS INLINE here.",
   "citedSources": ["File Name 1", "Link URL 1"],
   "hasMoodCards": boolean,
   "moodCards": [
@@ -166,7 +179,7 @@ JSON Structure:
       "timing": "Date, Season, or Usage Context",
       "visuals": ["Photorealistic visual description for image generation", "Visual Keyword 2"],
       "colors": ["#Hex1", "#Hex2"],
-      "description": "Brief cultural significance."
+      "description": "Brief cultural significance in simple language."
     }
   ]
 }

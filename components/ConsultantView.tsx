@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, ConsultantLevel, ChatSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { consultCulturalAgent, processImageForGemini } from '../services/geminiService';
@@ -36,9 +35,9 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // Image Input State
-  const [chatImage, setChatImage] = useState<File | null>(null);
-  const [chatImagePreview, setChatImagePreview] = useState<string | null>(null);
+  // Image Input State (Multiple)
+  const [chatImages, setChatImages] = useState<File[]>([]);
+  const [chatImagePreviews, setChatImagePreviews] = useState<string[]>([]);
   
   // Context Switching State
   const [isContextDropdownOpen, setIsContextDropdownOpen] = useState(false);
@@ -100,8 +99,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
       setIsSetupMode(true);
       setCurrentSessionId(null);
       setSetupAudience([]);
-      setChatImage(null);
-      setChatImagePreview(null);
+      setChatImages([]);
+      setChatImagePreviews([]);
   };
 
   const createSession = () => {
@@ -128,8 +127,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const loadSession = (id: string) => {
       setCurrentSessionId(id);
       setIsSetupMode(false);
-      setChatImage(null);
-      setChatImagePreview(null);
+      setChatImages([]);
+      setChatImagePreviews([]);
   };
 
   const deleteSession = (e: React.MouseEvent, id: string) => {
@@ -147,32 +146,46 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   };
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      if (e.target.files && e.target.files[0]) {
-          const file = e.target.files[0];
-          setChatImage(file);
+      if (e.target.files && e.target.files.length > 0) {
+          const newFiles = Array.from(e.target.files);
+          
+          // Append new files
+          setChatImages(prev => [...prev, ...newFiles]);
+          
           try {
-             // Process preview immediately to show the optimized version
-             const { base64, mimeType } = await processImageForGemini(file);
-             setChatImagePreview(`data:${mimeType};base64,${base64}`);
+             // Process preview immediately
+             const newPreviews = await Promise.all(newFiles.map(async file => {
+                 const { base64, mimeType } = await processImageForGemini(file);
+                 return `data:${mimeType};base64,${base64}`;
+             }));
+             setChatImagePreviews(prev => [...prev, ...newPreviews]);
           } catch (err) {
-              alert("Failed to load image");
+              alert("Failed to load one or more images");
           }
       }
   };
 
-  const clearChatImage = () => {
-      setChatImage(null);
-      setChatImagePreview(null);
+  const removeChatImage = (index: number) => {
+      setChatImages(prev => prev.filter((_, i) => i !== index));
+      setChatImagePreviews(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const clearChatImages = () => {
+      setChatImages([]);
+      setChatImagePreviews([]);
       if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleSend = async () => {
     if (loading) return; // Prevent send if already loading
-    if ((!inputValue.trim() && !chatImage) || !currentSession) return;
+    if ((!inputValue.trim() && chatImages.length === 0) || !currentSession) return;
 
-    // Add user message
-    const userMsg: ChatMessage = { role: 'user', text: inputValue };
-    // In a real app, we might want to store the image in the message history too, but for now we just send it.
+    // Add user message with image previews
+    const userMsg: ChatMessage = { 
+        role: 'user', 
+        text: inputValue,
+        images: chatImagePreviews.length > 0 ? [...chatImagePreviews] : undefined
+    };
     
     const updatedSession = {
         ...currentSession,
@@ -190,31 +203,31 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
         textareaRef.current.style.height = 'auto';
     }
 
-    // Convert image if present using optimized helper
-    let imageBase64 = undefined;
-    if (chatImage) {
+    // Process images to base64 for API (removing header not strictly needed if we process fresh from file)
+    let imagesBase64: string[] = [];
+    if (chatImages.length > 0) {
         try {
-            const { base64 } = await processImageForGemini(chatImage);
-            imageBase64 = base64;
+            const results = await Promise.all(chatImages.map((f: File) => processImageForGemini(f)));
+            imagesBase64 = results.map(r => r.base64);
         } catch (e) {
-            console.error("Failed to process image", e);
+            console.error("Failed to process images for sending", e);
         }
     }
     
     // Clear image state after sending
-    clearChatImage();
+    clearChatImages();
 
-    // Call API with RAG (using GLOBAL knowledgeFiles) + Web Search + Optional Image
+    // Call API
     const response = await consultCulturalAgent(
-        currentInput || (imageBase64 ? "Analyze this image" : ""), 
+        currentInput || (imagesBase64.length > 0 ? "Analyze these images" : ""), 
         updatedSession.messages, 
         currentSession.level,
         currentSession.audience,
-        knowledgeFiles, // Use Global Files
+        knowledgeFiles, 
         settings.apiKey,
         settings.generalModel,
-        imageBase64, // Pass image
-        settings.consultantSystemPrompt // Pass custom prompt
+        imagesBase64, // Pass array of images
+        settings.consultantSystemPrompt 
     );
 
     const modelMsg: ChatMessage = {
@@ -502,65 +515,76 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                 {/* Message Content */}
                                 <div className={`flex flex-col min-w-0 max-w-[85%] md:max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                                     
-                                    {/* 1. The Summary Paragraph */}
-                                    {msg.text && (
-                                        <div className={`p-4 rounded-2xl shadow-sm text-sm w-full break-words ${
-                                            msg.role === 'user' 
-                                            ? 'bg-gray-800 text-white rounded-tr-none' 
-                                            : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none'
-                                        }`}>
-                                            {msg.role === 'model' ? (
-                                                <MarkdownRenderer content={msg.text} />
-                                            ) : (
-                                                <p className="whitespace-pre-wrap font-sans">{msg.text}</p>
-                                            )}
+                                    {/* 1. The Text Bubble */}
+                                    {/* For USER messages, include the images INSIDE the bubble structure or adjacent */}
+                                    <div className={`p-4 rounded-2xl shadow-sm text-sm w-full break-words ${
+                                        msg.role === 'user' 
+                                        ? 'bg-gray-800 text-white rounded-tr-none' 
+                                        : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none'
+                                    }`}>
+                                        
+                                        {/* USER UPLOADED IMAGES */}
+                                        {msg.images && msg.images.length > 0 && (
+                                            <div className="flex flex-wrap gap-2 mb-3">
+                                                {msg.images.map((imgSrc, i) => (
+                                                    <div key={i} className="relative w-24 h-24 rounded-lg overflow-hidden border border-white/20">
+                                                        <img src={imgSrc} alt="uploaded context" className="w-full h-full object-cover" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
 
-                                            {/* SOURCE FOOTER (Only for Model) */}
-                                            {msg.role === 'model' && (
-                                                <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap gap-2">
-                                                    
-                                                    {/* A. Knowledge Base Citations */}
-                                                    {msg.citedSources && msg.citedSources.length > 0 && (
-                                                        <div className="flex flex-wrap gap-2 items-center w-full mb-1">
-                                                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                                                                <FileText size={10} /> Knowledge Base:
-                                                            </span>
-                                                            {msg.citedSources.map((source, sIdx) => (
-                                                                <span key={sIdx} className="px-2 py-1 bg-excali-purpleLight/20 text-excali-purple rounded text-[10px] font-bold border border-excali-purple/10">
-                                                                    {source}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    )}
+                                        {msg.role === 'model' ? (
+                                            <MarkdownRenderer content={msg.text || ""} />
+                                        ) : (
+                                            <p className="whitespace-pre-wrap font-sans">{msg.text}</p>
+                                        )}
 
-                                                    {/* B. Google Search Grounding */}
-                                                    {msg.groundingMetadata?.groundingChunks && (
-                                                         <div className="flex flex-wrap gap-2 items-center w-full">
-                                                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                                                                <Search size={10} /> Web Sources:
+                                        {/* SOURCE FOOTER (Only for Model) */}
+                                        {msg.role === 'model' && (
+                                            <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap gap-2">
+                                                
+                                                {/* A. Knowledge Base Citations */}
+                                                {msg.citedSources && msg.citedSources.length > 0 && (
+                                                    <div className="flex flex-wrap gap-2 items-center w-full mb-1">
+                                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                                            <FileText size={10} /> Knowledge Base:
+                                                        </span>
+                                                        {msg.citedSources.map((source, sIdx) => (
+                                                            <span key={sIdx} className="px-2 py-1 bg-excali-purpleLight/20 text-excali-purple rounded text-[10px] font-bold border border-excali-purple/10">
+                                                                {source}
                                                             </span>
-                                                            {msg.groundingMetadata.groundingChunks.map((chunk: any, cIdx: number) => {
-                                                                if (chunk.web?.uri) {
-                                                                    return (
-                                                                        <a 
-                                                                            key={cIdx} 
-                                                                            href={chunk.web.uri} 
-                                                                            target="_blank" 
-                                                                            rel="noreferrer"
-                                                                            className="px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[10px] font-bold border border-blue-100 flex items-center gap-1 transition-colors"
-                                                                        >
-                                                                            {chunk.web.title || "Source"} <ExternalLink size={8} />
-                                                                        </a>
-                                                                    )
-                                                                }
-                                                                return null;
-                                                            })}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* B. Google Search Grounding */}
+                                                {msg.groundingMetadata?.groundingChunks && (
+                                                     <div className="flex flex-wrap gap-2 items-center w-full">
+                                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                                            <Search size={10} /> Web Sources:
+                                                        </span>
+                                                        {msg.groundingMetadata.groundingChunks.map((chunk: any, cIdx: number) => {
+                                                            if (chunk.web?.uri) {
+                                                                return (
+                                                                    <a 
+                                                                        key={cIdx} 
+                                                                        href={chunk.web.uri} 
+                                                                        target="_blank" 
+                                                                        rel="noreferrer"
+                                                                        className="px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[10px] font-bold border border-blue-100 flex items-center gap-1 transition-colors"
+                                                                    >
+                                                                        {chunk.web.title || "Source"} <ExternalLink size={8} />
+                                                                    </a>
+                                                                )
+                                                            }
+                                                            return null;
+                                                        })}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
 
                                     {/* 2. The Mood Cards (If Any) */}
                                     {msg.moodCards && msg.moodCards.length > 0 && (
@@ -598,18 +622,22 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                     {/* Input Area */}
                     <div className="p-4 bg-white border-t border-gray-200">
                         <div className="relative max-w-4xl mx-auto">
-                             {/* Image Preview */}
-                            {chatImagePreview && (
-                                <div className="mb-2 inline-block relative group">
-                                    <div className="relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
-                                        <img src={chatImagePreview} alt="Preview" className="w-full h-full object-cover" />
-                                    </div>
-                                    <button 
-                                        onClick={clearChatImage}
-                                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600 transition-colors"
-                                    >
-                                        <X size={12} />
-                                    </button>
+                             {/* Image Previews (Multiple) */}
+                            {chatImagePreviews.length > 0 && (
+                                <div className="mb-2 flex gap-2 overflow-x-auto custom-scrollbar pb-1">
+                                    {chatImagePreviews.map((preview, idx) => (
+                                        <div key={idx} className="relative group flex-shrink-0">
+                                            <div className="w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
+                                                <img src={preview} alt="Preview" className="w-full h-full object-cover" />
+                                            </div>
+                                            <button 
+                                                onClick={() => removeChatImage(idx)}
+                                                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow-md hover:bg-red-600 transition-colors z-10"
+                                            >
+                                                <X size={12} />
+                                            </button>
+                                        </div>
+                                    ))}
                                 </div>
                             )}
                             
@@ -617,7 +645,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                 <button
                                     onClick={() => fileInputRef.current?.click()}
                                     className="p-4 bg-gray-100 text-gray-500 rounded-xl hover:bg-gray-200 hover:text-gray-700 transition-all flex-shrink-0 h-[56px] flex items-center justify-center"
-                                    title="Upload Image"
+                                    title="Upload Images"
                                     disabled={loading} // Keep disabling image upload during generation
                                 >
                                     <ImageIcon size={20} />
@@ -628,6 +656,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     onChange={handleImageSelect}
                                     className="hidden"
                                     accept="image/*"
+                                    multiple // ENABLE MULTIPLE
                                 />
                                 
                                 <div className="relative flex-1">
@@ -643,7 +672,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     />
                                     <button
                                         onClick={handleSend}
-                                        disabled={(!inputValue.trim() && !chatImage) || loading}
+                                        disabled={(!inputValue.trim() && chatImages.length === 0) || loading}
                                         className="absolute right-2 bottom-2 p-2 bg-excali-purple text-white rounded-lg hover:shadow-lg disabled:opacity-50 disabled:shadow-none transition-all active:scale-95 flex items-center justify-center h-10 w-10"
                                     >
                                         <Send size={20} />

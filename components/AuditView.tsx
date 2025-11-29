@@ -403,7 +403,7 @@ const AuditView: React.FC<AuditViewProps> = ({
                     onDragOver={handleDragOver}
                     onDrop={handleDrop}
                     onClick={() => fileInputRef.current?.click()}
-                    className="text-center p-8 flex flex-col items-center gap-4 group cursor-pointer border-4 border-dashed border-gray-200 rounded-2xl hover:bg-gray-50 hover:border-excali-purple/50 transition-all max-w-sm w-full animate-in zoom-in-95 duration-300"
+                    className="text-center p-12 md:p-20 flex flex-col items-center justify-center gap-6 group cursor-pointer border-4 border-dashed border-gray-200 rounded-3xl hover:bg-gray-50 hover:border-excali-purple/50 transition-all max-w-4xl w-full h-[60vh] animate-in zoom-in-95 duration-300"
                 >
                     <input 
                         type="file" 
@@ -413,12 +413,12 @@ const AuditView: React.FC<AuditViewProps> = ({
                         onChange={handleFileChange}
                     />
                     
-                    <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform border border-gray-100 pointer-events-none">
-                        <Upload size={28} className="text-gray-400 group-hover:text-excali-purple" />
+                    <div className="w-24 h-24 bg-gray-50 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform border border-gray-100 pointer-events-none">
+                        <Upload size={40} className="text-gray-400 group-hover:text-excali-purple" />
                     </div>
-                    <div className="pointer-events-none">
-                      <h3 className="font-hand text-2xl font-bold text-gray-700 mb-1">Upload Design</h3>
-                      <p className="font-sans text-sm text-gray-400">Click or drag image here</p>
+                    <div className="pointer-events-none space-y-2">
+                      <h3 className="font-hand text-3xl font-bold text-gray-700">Upload Design</h3>
+                      <p className="font-sans text-lg text-gray-400">Click or drag image here</p>
                     </div>
                 </div>
             ) : (

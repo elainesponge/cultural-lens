@@ -332,7 +332,7 @@ export const consultCulturalAgent = async (
   knowledgeFiles: KnowledgeFile[], 
   apiKey: string, 
   modelId: string,
-  chatImageBase64?: string,
+  chatImagesBase64?: string[], // CHANGED: Accept array of strings
   systemPrompt?: string
 ): Promise<{ text: string, moodCards?: MoodCardData[], citedSources?: string[], groundingMetadata?: any }> => {
   if (!apiKey) return { text: "API Key Missing. Please configure it in settings." };
@@ -342,8 +342,8 @@ export const consultCulturalAgent = async (
   const audienceStr = audience.length > 0 ? audience.join(", ") : "Global/General";
   
   const modeInstructions = level === ConsultantLevel.FAST 
-    ? "FAST MODE: Be extremely concise. Give practical colors (Hex codes) and clear icons immediately." 
-    : "DEEP MODE: Provide historical context, deep meanings, and metaphors.";
+    ? "FAST MODE: Be simple and quick. Give practical colors (Hex codes) and clear icons immediately." 
+    : "DEEP MODE: Explain the history and meaning, but use simple storytelling language (no complex words).";
 
   // Split into Files vs Links
   const files = knowledgeFiles.filter(f => f.sourceType === 'FILE');
@@ -396,15 +396,17 @@ export const consultCulturalAgent = async (
         }
     });
 
-    // Add user uploaded image (Chat Image)
-    if (chatImageBase64) {
-        parts.push({
-            inlineData: {
-                mimeType: 'image/jpeg', // Using processImageForGemini guarantees JPEG
-                data: chatImageBase64
-            }
+    // Add user uploaded images (Chat Images) - CHANGED: Iterate array
+    if (chatImagesBase64 && chatImagesBase64.length > 0) {
+        chatImagesBase64.forEach(img => {
+             parts.push({
+                inlineData: {
+                    mimeType: 'image/jpeg', // Using processImageForGemini guarantees JPEG
+                    data: img
+                }
+            });
         });
-        parts.push({ text: "Image context provided above." });
+        parts.push({ text: "Image(s) context provided above." });
     }
 
     // Add user text

@@ -350,7 +350,7 @@ function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 h-full relative overflow-hidden bg-dots">
-          {mode === AppMode.AUDIT ? (
+          <div className={`w-full h-full ${mode === AppMode.AUDIT ? 'block' : 'hidden'}`}>
             <AuditView 
                 settings={settings}
                 knowledgeFiles={knowledgeFiles}
@@ -359,7 +359,8 @@ function App() {
                 onRemoveKnowledge={handleGlobalRemoveFile}
                 isUploadingKnowledge={isUploadingFile}
             />
-          ) : (
+          </div>
+          <div className={`w-full h-full ${mode === AppMode.CONSULTANT ? 'block' : 'hidden'}`}>
             <ConsultantView 
                 settings={settings}
                 knowledgeFiles={knowledgeFiles}
@@ -368,7 +369,7 @@ function App() {
                 onRemoveKnowledge={handleGlobalRemoveFile}
                 isUploadingKnowledge={isUploadingFile}
             />
-          )}
+          </div>
       </main>
     </div>
   );
