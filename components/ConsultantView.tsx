@@ -1,7 +1,8 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, ConsultantLevel, ChatSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { consultCulturalAgent, processImageForGemini } from '../services/geminiService';
-import { Send, User, Bot, MessageSquare, Plus, Globe, CheckSquare, Square, ChevronRight, Trash2, Zap, BookOpen, Library, FileText, ExternalLink, Search, Image as ImageIcon, X, Edit } from 'lucide-react';
+import { Send, User, Bot, MessageSquare, Plus, Globe, CheckSquare, Square, ChevronRight, Trash2, Zap, BookOpen, Library, FileText, ExternalLink, Search, Image as ImageIcon, X, Edit, Globe2 } from 'lucide-react';
 import MoodCard from './MoodCard';
 import MarkdownRenderer from './MarkdownRenderer';
 import KnowledgeDrawer from './KnowledgeDrawer';
@@ -34,6 +35,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   // Chat State
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
+  const [useSearch, setUseSearch] = useState(false); // Default to false for speed
   
   // Image Input State (Multiple)
   const [chatImages, setChatImages] = useState<File[]>([]);
@@ -147,7 +149,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
 
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
-          const newFiles = Array.from(e.target.files);
+          const newFiles = Array.from(e.target.files) as File[];
           
           // Append new files
           setChatImages(prev => [...prev, ...newFiles]);
@@ -180,30 +182,45 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     if (loading) return; // Prevent send if already loading
     if ((!inputValue.trim() && chatImages.length === 0) || !currentSession) return;
 
-    // Add user message with image previews
+    // 1. Add User Message
     const userMsg: ChatMessage = { 
         role: 'user', 
         text: inputValue,
         images: chatImagePreviews.length > 0 ? [...chatImagePreviews] : undefined
     };
     
-    const updatedSession = {
+    // Update title only for the very first user message
+    const updatedTitle = currentSession.messages.length <= 1 && inputValue 
+        ? (inputValue.slice(0, 30) + (inputValue.length > 30 ? "..." : "")) 
+        : currentSession.title;
+
+    let updatedSession = {
         ...currentSession,
+        title: updatedTitle,
         messages: [...currentSession.messages, userMsg],
-        title: currentSession.messages.length <= 1 && inputValue ? inputValue.slice(0, 30) + (inputValue.length > 30 ? "..." : "") : currentSession.title
     };
     
+    // 2. Add Placeholder Model Message for Streaming
+    const placeholderMsg: ChatMessage = {
+        role: 'model',
+        text: '',
+        isTyping: true
+    };
+    updatedSession.messages.push(placeholderMsg);
+
+    // Commit to state
     updateCurrentSession(updatedSession);
+    
     const currentInput = inputValue;
     setInputValue('');
     setLoading(true);
     
-    // Reset textarea height manually after send
+    // Reset textarea height
     if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
     }
 
-    // Process images to base64 for API (removing header not strictly needed if we process fresh from file)
+    // Process images to base64 for API
     let imagesBase64: string[] = [];
     if (chatImages.length > 0) {
         try {
@@ -214,35 +231,90 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
         }
     }
     
-    // Clear image state after sending
     clearChatImages();
 
-    // Call API
-    const response = await consultCulturalAgent(
-        currentInput || (imagesBase64.length > 0 ? "Analyze these images" : ""), 
-        updatedSession.messages, 
-        currentSession.level,
-        currentSession.audience,
-        knowledgeFiles, 
-        settings.apiKey,
-        settings.generalModel,
-        imagesBase64, // Pass array of images
-        settings.consultantSystemPrompt 
-    );
+    // 3. Call API with Streaming Callback
+    try {
+        // We capture currentSessionId in a const closure to use inside the callback
+        const activeSessionId = currentSessionId;
 
-    const modelMsg: ChatMessage = {
-        role: 'model',
-        text: response.text,
-        moodCards: response.moodCards,
-        citedSources: response.citedSources,
-        groundingMetadata: response.groundingMetadata
-    };
+        const response = await consultCulturalAgent(
+            currentInput || (imagesBase64.length > 0 ? "Analyze these images" : ""), 
+            // Send history excluding the placeholder we just added
+            updatedSession.messages.slice(0, -1), 
+            updatedSession.level,
+            updatedSession.audience,
+            knowledgeFiles, 
+            settings.apiKey,
+            settings.generalModel,
+            imagesBase64,
+            useSearch, // Pass search toggle state
+            settings.consultantSystemPrompt,
+            (partialText) => {
+                // STREAMING UPDATE
+                setSessions(prevSessions => {
+                    return prevSessions.map(s => {
+                        if (s.id === activeSessionId) {
+                            const msgs = [...s.messages];
+                            const lastMsgIdx = msgs.length - 1;
+                            if (lastMsgIdx >= 0 && msgs[lastMsgIdx].role === 'model') {
+                                // Update text in real-time
+                                msgs[lastMsgIdx] = { ...msgs[lastMsgIdx], text: partialText };
+                            }
+                            return { ...s, messages: msgs };
+                        }
+                        return s;
+                    });
+                });
+            }
+        );
 
-    updateCurrentSession({
-        ...updatedSession,
-        messages: [...updatedSession.messages, modelMsg]
-    });
-    setLoading(false);
+        // 4. Final Update (Cleaned Text + Mood Cards)
+        setSessions(prevSessions => {
+             return prevSessions.map(s => {
+                 if (s.id === activeSessionId) {
+                     const msgs = [...s.messages];
+                     const lastMsgIdx = msgs.length - 1;
+                     if (lastMsgIdx >= 0 && msgs[lastMsgIdx].role === 'model') {
+                         msgs[lastMsgIdx] = { 
+                             ...msgs[lastMsgIdx], 
+                             text: response.text, // Cleaned text (JSON block removed)
+                             moodCards: response.moodCards,
+                             citedSources: response.citedSources,
+                             groundingMetadata: response.groundingMetadata,
+                             isTyping: false
+                         };
+                     }
+                     return { ...s, messages: msgs };
+                 }
+                 return s;
+             });
+        });
+
+    } catch (error) {
+        console.error("Chat Error:", error);
+        // Remove the placeholder if failed, or show error message
+        setSessions(prevSessions => {
+             return prevSessions.map(s => {
+                 if (s.id === currentSessionId) {
+                     const msgs = [...s.messages];
+                     const lastMsgIdx = msgs.length - 1;
+                     // If the last message was our placeholder (still typing), update it to error
+                     if (lastMsgIdx >= 0 && msgs[lastMsgIdx].isTyping) {
+                         msgs[lastMsgIdx] = {
+                             ...msgs[lastMsgIdx],
+                             text: "Sorry, I encountered an error while connecting to the service. Please check your API key and connection.",
+                             isTyping: false
+                         };
+                     }
+                     return { ...s, messages: msgs };
+                 }
+                 return s;
+             });
+        });
+    } finally {
+        setLoading(false);
+    }
   };
 
   const handleLevelChange = (newLevel: ConsultantLevel) => {
@@ -306,37 +378,36 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             <div className="p-4">
                 <button 
                     onClick={startNewChat}
-                    className="w-full flex items-center justify-center gap-2 bg-excali-purple text-white py-3 rounded-lg font-hand font-bold text-lg hover:shadow-md transition-all active:scale-95"
+                    className="w-full flex items-center justify-center gap-2 bg-excali-purple text-white py-3 rounded-lg font-hand font-bold text-lg hover:shadow-sketch transition-all"
                 >
                     <Plus size={20} /> New Chat
                 </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto px-2 space-y-1 custom-scrollbar pb-4">
-                {sessions.length > 0 && (
-                    <div className="px-3 py-2 text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center justify-between">
-                        <span>Recent</span>
-                    </div>
+            <div className="flex-1 overflow-y-auto px-2 space-y-1">
+                {sessions.length === 0 && (
+                    <div className="text-center text-gray-400 font-hand py-10">No chats yet</div>
                 )}
                 {sessions.map(session => (
-                    <div
-                        key={session.id}
+                    <div 
+                        key={session.id} 
                         onClick={() => loadSession(session.id)}
-                        className={`group w-full text-left p-3 rounded-lg flex items-start gap-3 transition-colors cursor-pointer relative ${currentSessionId === session.id ? 'bg-white shadow-sm border border-gray-200' : 'hover:bg-gray-100'}`}
+                        className={`group p-3 rounded-lg cursor-pointer flex items-center gap-3 transition-colors relative ${currentSessionId === session.id ? 'bg-white shadow-sm border border-gray-200' : 'hover:bg-gray-100 border border-transparent'}`}
                     >
-                        <MessageSquare size={18} className={`mt-0.5 flex-shrink-0 ${currentSessionId === session.id ? 'text-excali-purple' : 'text-gray-400'}`} />
-                        <div className="overflow-hidden flex-1 min-w-0 pr-6">
-                            <div className={`font-hand font-bold text-sm truncate ${currentSessionId === session.id ? 'text-gray-800' : 'text-gray-500'}`}>
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 font-bold text-xs ${currentSessionId === session.id ? 'bg-excali-purpleLight text-excali-purple' : 'bg-gray-200 text-gray-500'}`}>
+                            {session.audience[0]?.[0] || 'C'}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                            <div className={`font-hand font-bold truncate ${currentSessionId === session.id ? 'text-gray-900' : 'text-gray-600'}`}>
                                 {session.title}
                             </div>
-                            <div className="text-[10px] text-gray-400 mt-1 truncate">
-                                {session.audience.join(", ")}
+                            <div className="text-[10px] text-gray-400 truncate">
+                                {new Date(session.timestamp).toLocaleDateString()}
                             </div>
                         </div>
-                        <button 
+                         <button 
                             onClick={(e) => deleteSession(e, session.id)}
-                            className="absolute right-2 top-2 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-all"
-                            title="Delete Chat"
+                            className="absolute right-2 top-3 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
                         >
                             <Trash2 size={14} />
                         </button>
@@ -345,294 +416,222 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             </div>
         </div>
 
-        {/* MAIN AREA */}
-        <div className="flex-1 flex flex-col relative bg-dots h-full min-w-0">
+        {/* MAIN CHAT AREA */}
+        <div className="flex-1 flex flex-col h-full relative">
             
-            {/* SETUP SCREEN */}
-            {isSetupMode ? (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 animate-in zoom-in-95 duration-300 overflow-y-auto">
-                    <div className="bg-white p-8 rounded-2xl shadow-sketch max-w-2xl w-full border border-gray-200">
-                        <div className="text-center mb-8">
-                            <div className="w-16 h-16 bg-excali-purpleLight text-excali-purple rounded-full flex items-center justify-center mx-auto mb-4">
-                                <Globe size={32} />
+            {/* Knowledge Drawer */}
+            <KnowledgeDrawer 
+                isOpen={showKnowledge}
+                onClose={() => setShowKnowledge(false)}
+                files={knowledgeFiles}
+                onUpload={onUploadKnowledge}
+                onAddLink={onAddLink}
+                onRemove={onRemoveKnowledge}
+                isUploading={isUploadingKnowledge}
+                description="Upload brand guidelines, color palettes, or research documents here."
+            />
+
+            {/* SETUP SCREEN (If no current session) */}
+            {(isSetupMode || !currentSession) ? (
+                <div className="flex-1 flex flex-col items-center justify-center p-6 bg-dots animate-in fade-in duration-300">
+                    <div className="max-w-2xl w-full bg-white p-8 rounded-3xl shadow-sketch border border-gray-200 relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-2 bg-excali-purple"></div>
+                        
+                        <div className="flex justify-center mb-6">
+                            <div className="w-16 h-16 bg-excali-purpleLight rounded-full flex items-center justify-center text-excali-purple">
+                                <MessageSquare size={32} />
                             </div>
-                            <h2 className="font-hand text-3xl font-bold text-gray-800 mb-2">Who are we designing for?</h2>
-                            <p className="font-sans text-gray-500">Select the target regions to tailor the cultural context.</p>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8 max-h-[300px] overflow-y-auto custom-scrollbar p-1">
+                        <h2 className="font-hand text-3xl font-bold text-center text-gray-800 mb-2">New Consultation</h2>
+                        <p className="font-sans text-center text-gray-500 mb-8 max-w-md mx-auto">
+                            Who are you designing for today? I'll tailor my advice to their cultural context.
+                        </p>
+
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8">
                             {AUDIENCE_GROUPS.map(group => {
                                 const isSelected = setupAudience.includes(group.label);
                                 return (
                                     <button
                                         key={group.label}
                                         onClick={() => toggleSetupAudience(group.label)}
-                                        className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all ${isSelected ? 'border-excali-purple bg-excali-purpleLight/10' : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'}`}
+                                        className={`flex items-center gap-3 px-4 py-3 rounded-xl border-2 transition-all ${isSelected ? 'border-excali-purple bg-excali-purpleLight/20 shadow-sm' : 'border-gray-100 bg-gray-50 hover:bg-white hover:border-gray-200'}`}
                                     >
-                                        <div className={`text-excali-purple transition-transform ${isSelected ? 'scale-110' : 'opacity-30'}`}>
-                                            {isSelected ? <CheckSquare size={24} /> : <Square size={24} />}
+                                        <div className={`transition-colors ${isSelected ? 'text-excali-purple' : 'text-gray-300'}`}>
+                                            {isSelected ? <CheckSquare size={20} /> : <Square size={20} />}
                                         </div>
-                                        <span className={`font-hand font-bold text-lg ${isSelected ? 'text-gray-900' : 'text-gray-500'}`}>
+                                        <span className={`font-hand font-bold text-lg ${isSelected ? 'text-gray-800' : 'text-gray-500'}`}>
                                             {group.label}
                                         </span>
                                     </button>
-                                )
+                                );
                             })}
                         </div>
 
                         <button 
                             onClick={createSession}
                             disabled={setupAudience.length === 0}
-                            className="w-full bg-excali-purple text-white font-hand font-bold text-xl py-4 rounded-xl shadow-sketch hover:shadow-sketch-hover hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            className="w-full bg-excali-purple text-white font-hand font-bold text-xl py-3 rounded-xl shadow-sketch hover:shadow-sketch-hover hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none disabled:transform-none flex items-center justify-center gap-2"
                         >
-                            Start Consultation <ChevronRight size={24} />
+                            Start Chat <ChevronRight size={24} />
                         </button>
                     </div>
                 </div>
             ) : (
-                /* CHAT INTERFACE */
+                /* ACTIVE CHAT UI */
                 <>
                     {/* Header */}
-                    <div className="h-16 bg-white/80 backdrop-blur-md border-b border-gray-200 flex items-center justify-between px-3 md:px-6 z-10 sticky top-0">
-                         <div className="flex items-center gap-2 md:gap-4 min-w-0 flex-1">
-                            {/* NOTE: Removed overflow-hidden from parent containers to allow dropdown to show fully */}
-                            <div className="flex items-center gap-2 flex-1 min-w-0 relative" ref={contextDropdownRef}>
-                                <span className="font-sans text-xs font-bold text-gray-400 uppercase tracking-wide flex-shrink-0 hidden sm:inline">Context:</span>
-                                
-                                <button 
+                    <div className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-4 md:px-6 flex-shrink-0 z-10 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+                        <div className="flex items-center gap-3">
+                             <button onClick={startNewChat} className="md:hidden p-2 text-gray-400 hover:bg-gray-100 rounded-full"><ChevronRight className="rotate-180" size={20} /></button>
+                             
+                             <div className="relative" ref={contextDropdownRef}>
+                                 <button 
                                     onClick={() => {
-                                        // Initialize temp context state when opening
-                                        if (!isContextDropdownOpen) {
-                                            setTempContext(currentSession?.audience || []);
-                                        }
+                                        setTempContext(currentSession.audience);
                                         setIsContextDropdownOpen(!isContextDropdownOpen);
                                     }}
-                                    className="flex gap-1 overflow-x-auto no-scrollbar items-center hover:bg-gray-100 p-1 rounded-lg transition-colors border border-transparent hover:border-gray-200 group"
-                                    title="Switch Region"
-                                >
-                                    {currentSession?.audience.map((a, i) => (
-                                        <span key={i} className="px-2 py-0.5 bg-excali-purpleLight/30 text-excali-purple rounded text-xs font-bold border border-excali-purple/20 whitespace-nowrap">
-                                            {a}
-                                        </span>
-                                    ))}
-                                    <Edit size={12} className="text-gray-300 ml-1 flex-shrink-0 group-hover:text-gray-500" />
-                                </button>
-
-                                {/* Interactive Dropdown */}
-                                {isContextDropdownOpen && (
-                                    <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-3 z-50 animate-in fade-in zoom-in-95 duration-200">
-                                        <div className="flex justify-between items-center mb-2 px-1">
-                                            <div className="text-xs font-bold text-gray-400 uppercase">Switch Region</div>
-                                            <button onClick={() => setIsContextDropdownOpen(false)}><X size={14} className="text-gray-400 hover:text-gray-600"/></button>
-                                        </div>
-                                        <div className="space-y-1 max-h-[300px] overflow-y-auto custom-scrollbar mb-3">
-                                            {AUDIENCE_GROUPS.map(group => {
-                                                const isSelected = tempContext.includes(group.label);
-                                                return (
-                                                    <button
-                                                        key={group.label}
-                                                        onClick={() => toggleTempContext(group.label)}
-                                                        className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-left text-sm ${isSelected ? 'bg-excali-purpleLight/20 text-excali-purple' : 'hover:bg-gray-50 text-gray-600'}`}
-                                                    >
-                                                        <div className={`transition-transform ${isSelected ? 'scale-110' : 'opacity-30'}`}>
-                                                            {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                                                        </div>
-                                                        <span className="font-bold">{group.label}</span>
-                                                    </button>
-                                                )
-                                            })}
-                                        </div>
-                                        <button 
+                                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors group"
+                                 >
+                                     <Globe size={16} className="text-excali-purple" />
+                                     <span className="font-hand font-bold text-gray-700">{currentSession.audience.join(", ")}</span>
+                                     <Edit size={12} className="text-gray-400 opacity-0 group-hover:opacity-100" />
+                                 </button>
+                                 
+                                 {isContextDropdownOpen && (
+                                     <div className="absolute top-full left-0 mt-2 w-72 bg-white border border-gray-200 rounded-xl shadow-xl p-4 z-50 animate-in fade-in zoom-in-95 duration-100">
+                                         <h4 className="font-bold text-xs uppercase text-gray-400 mb-3">Switch Context</h4>
+                                         <div className="space-y-2 mb-4 max-h-[200px] overflow-y-auto">
+                                            {AUDIENCE_GROUPS.map(group => (
+                                                <button
+                                                    key={group.label}
+                                                    onClick={() => toggleTempContext(group.label)}
+                                                    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-sm font-hand font-bold ${tempContext.includes(group.label) ? 'bg-excali-purpleLight/30 text-excali-purple' : 'hover:bg-gray-50 text-gray-600'}`}
+                                                >
+                                                    {tempContext.includes(group.label) ? <CheckSquare size={14}/> : <Square size={14}/>}
+                                                    {group.label}
+                                                </button>
+                                            ))}
+                                         </div>
+                                         <button 
                                             onClick={applyContextChange}
                                             disabled={tempContext.length === 0}
-                                            className="w-full bg-excali-purple text-white rounded-lg py-2.5 text-xs font-bold hover:shadow-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        >
-                                            Update Context
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
+                                            className="w-full bg-excali-purple text-white py-2 rounded-lg text-sm font-bold shadow-sm disabled:opacity-50"
+                                         >
+                                             Apply Change
+                                         </button>
+                                     </div>
+                                 )}
+                             </div>
+                        </div>
 
-                            <div className="h-6 w-px bg-gray-200 flex-shrink-0"></div>
-                            {/* Knowledge Base Toggle */}
+                        <div className="flex items-center gap-2">
                             <button 
+                                onClick={() => handleLevelChange(currentSession.level === ConsultantLevel.FAST ? ConsultantLevel.DEEP : ConsultantLevel.FAST)}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all border ${currentSession.level === ConsultantLevel.FAST ? 'bg-orange-50 text-orange-600 border-orange-100' : 'bg-purple-50 text-purple-600 border-purple-100'}`}
+                            >
+                                {currentSession.level === ConsultantLevel.FAST ? <Zap size={14} /> : <BookOpen size={14} />}
+                                {currentSession.level}
+                            </button>
+
+                             <button 
                                 onClick={() => setShowKnowledge(!showKnowledge)}
-                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex-shrink-0 ${showKnowledge ? 'bg-excali-purple text-white shadow-md' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
-                                title="Knowledge Base"
+                                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ml-2 border ${showKnowledge ? 'bg-excali-purple text-white border-excali-purple' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
                             >
                                 <Library size={14} />
-                                <span className="hidden md:inline">Knowledge Base</span>
-                                {knowledgeFiles.length > 0 && (
-                                    <span className={`ml-1 px-1.5 rounded-full text-[10px] ${showKnowledge ? 'bg-white text-excali-purple' : 'bg-gray-300 text-white'}`}>
-                                        {knowledgeFiles.length}
-                                    </span>
-                                )}
+                                <span className="hidden sm:inline">Knowledge</span>
                             </button>
-                         </div>
-                         
-                         <div className="flex bg-gray-100 p-1 rounded-lg flex-shrink-0 ml-2">
-                            <button 
-                                onClick={() => handleLevelChange(ConsultantLevel.FAST)}
-                                className={`flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentSession?.level === ConsultantLevel.FAST ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                                title="Fast Mode: Extremely concise, practical colors & icons"
-                            >
-                                <Zap size={12} className={currentSession?.level === ConsultantLevel.FAST ? "text-yellow-500 fill-yellow-500" : ""} /> 
-                                <span className="hidden md:inline">Fast Mode</span>
-                            </button>
-                            <button 
-                                onClick={() => handleLevelChange(ConsultantLevel.DEEP)}
-                                className={`flex items-center gap-1 px-2 md:px-3 py-1.5 text-xs font-bold rounded-md transition-all ${currentSession?.level === ConsultantLevel.DEEP ? 'bg-white text-excali-purple shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
-                                title="Deep Mode: Historical context, deep meanings, and metaphors"
-                            >
-                                <BookOpen size={12} />
-                                <span className="hidden md:inline">Deep Mode</span>
-                            </button>
-                         </div>
+                        </div>
                     </div>
 
-                    {/* REUSABLE KNOWLEDGE DRAWER */}
-                    <KnowledgeDrawer 
-                        isOpen={showKnowledge}
-                        onClose={() => setShowKnowledge(false)}
-                        files={knowledgeFiles}
-                        onUpload={onUploadKnowledge}
-                        onAddLink={onAddLink}
-                        onRemove={onRemoveKnowledge}
-                        isUploading={isUploadingKnowledge}
-                        description="Global Knowledge Base: These files are shared across both the Audit and Consultant features."
-                    />
-
                     {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth w-full" ref={scrollRef}>
-                        {currentSession?.messages.map((msg, idx) => (
-                            <div key={idx} className={`flex items-start gap-3 md:gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''} animate-in fade-in slide-in-from-bottom-2 duration-300 max-w-full`}>
-                                
-                                {/* Avatar */}
-                                <div className={`w-8 h-8 md:w-10 md:h-10 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm ${msg.role === 'user' ? 'bg-gray-800 text-white' : 'bg-white text-excali-purple border border-gray-200'}`}>
-                                    {msg.role === 'user' ? <User size={18} /> : <Bot size={18} />}
-                                </div>
-
-                                {/* Message Content */}
-                                <div className={`flex flex-col min-w-0 max-w-[85%] md:max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                    <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-dots" ref={scrollRef}>
+                        <div className="max-w-4xl mx-auto space-y-8">
+                            {currentSession.messages.map((msg, idx) => (
+                                <div key={idx} className={`flex gap-4 animate-in fade-in slide-in-from-bottom-2 duration-300 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                                     
-                                    {/* 1. The Text Bubble */}
-                                    {/* For USER messages, include the images INSIDE the bubble structure or adjacent */}
-                                    <div className={`p-4 rounded-2xl shadow-sm text-sm w-full break-words ${
-                                        msg.role === 'user' 
-                                        ? 'bg-gray-800 text-white rounded-tr-none' 
-                                        : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none'
-                                    }`}>
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm border border-gray-100 ${msg.role === 'user' ? 'bg-gray-800 text-white' : 'bg-white text-excali-purple'}`}>
+                                        {msg.role === 'user' ? <User size={20} /> : <Bot size={20} />}
+                                    </div>
+
+                                    <div className={`flex flex-col gap-2 max-w-[85%] md:max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                                         
-                                        {/* USER UPLOADED IMAGES */}
+                                        {/* Image Attachments */}
                                         {msg.images && msg.images.length > 0 && (
-                                            <div className="flex flex-wrap gap-2 mb-3">
-                                                {msg.images.map((imgSrc, i) => (
-                                                    <div key={i} className="relative w-24 h-24 rounded-lg overflow-hidden border border-white/20">
-                                                        <img src={imgSrc} alt="uploaded context" className="w-full h-full object-cover" />
-                                                    </div>
+                                            <div className="flex flex-wrap gap-2 mb-2 justify-end">
+                                                {msg.images.map((img, i) => (
+                                                    <img key={i} src={img} alt="Attachment" className="h-32 w-auto rounded-lg border-2 border-white shadow-sm object-cover" />
                                                 ))}
                                             </div>
                                         )}
 
-                                        {msg.role === 'model' ? (
-                                            <MarkdownRenderer content={msg.text || ""} />
-                                        ) : (
-                                            <p className="whitespace-pre-wrap font-sans">{msg.text}</p>
-                                        )}
+                                        <div className={`p-5 rounded-2xl shadow-sm border ${msg.role === 'user' ? 'bg-gray-800 text-white border-gray-700 rounded-tr-none' : 'bg-white text-gray-800 border-gray-100 rounded-tl-none'}`}>
+                                            {msg.isTyping && !msg.text ? (
+                                                <div className="flex gap-1 h-6 items-center px-2">
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                                </div>
+                                            ) : (
+                                                <MarkdownRenderer content={msg.text || ""} />
+                                            )}
 
-                                        {/* SOURCE FOOTER (Only for Model) */}
-                                        {msg.role === 'model' && (
-                                            <div className="mt-4 pt-3 border-t border-gray-100 flex flex-wrap gap-2">
-                                                
-                                                {/* A. Knowledge Base Citations */}
-                                                {msg.citedSources && msg.citedSources.length > 0 && (
-                                                    <div className="flex flex-wrap gap-2 items-center w-full mb-1">
-                                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                                                            <FileText size={10} /> Knowledge Base:
+                                            {/* Source Citations */}
+                                            {msg.citedSources && msg.citedSources.length > 0 && (
+                                                <div className="mt-4 pt-3 border-t border-gray-100/20 text-xs opacity-70 flex flex-wrap gap-2">
+                                                    <span className="font-bold">Sources:</span>
+                                                    {msg.citedSources.map((src, i) => (
+                                                        <span key={i} className="bg-black/5 px-2 py-0.5 rounded flex items-center gap-1">
+                                                            <FileText size={10} /> {src}
                                                         </span>
-                                                        {msg.citedSources.map((source, sIdx) => (
-                                                            <span key={sIdx} className="px-2 py-1 bg-excali-purpleLight/20 text-excali-purple rounded text-[10px] font-bold border border-excali-purple/10">
-                                                                {source}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                )}
+                                                    ))}
+                                                </div>
+                                            )}
 
-                                                {/* B. Google Search Grounding */}
-                                                {msg.groundingMetadata?.groundingChunks && (
-                                                     <div className="flex flex-wrap gap-2 items-center w-full">
-                                                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
-                                                            <Search size={10} /> Web Sources:
-                                                        </span>
-                                                        {msg.groundingMetadata.groundingChunks.map((chunk: any, cIdx: number) => {
-                                                            if (chunk.web?.uri) {
-                                                                return (
-                                                                    <a 
-                                                                        key={cIdx} 
-                                                                        href={chunk.web.uri} 
-                                                                        target="_blank" 
-                                                                        rel="noreferrer"
-                                                                        className="px-2 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded text-[10px] font-bold border border-blue-100 flex items-center gap-1 transition-colors"
-                                                                    >
-                                                                        {chunk.web.title || "Source"} <ExternalLink size={8} />
-                                                                    </a>
-                                                                )
-                                                            }
-                                                            return null;
-                                                        })}
-                                                    </div>
-                                                )}
+                                            {/* Grounding Metadata (Search Results) */}
+                                            {msg.groundingMetadata?.groundingChunks && (
+                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                    {msg.groundingMetadata.groundingChunks.map((chunk: any, i: number) => {
+                                                        if (chunk.web?.uri) {
+                                                            return (
+                                                                <a key={i} href={chunk.web.uri} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors border border-blue-100">
+                                                                    <ExternalLink size={10} /> {chunk.web.title || "Web Source"}
+                                                                </a>
+                                                            )
+                                                        }
+                                                        return null;
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Mood Cards (Horizontal Scroll) */}
+                                        {msg.moodCards && msg.moodCards.length > 0 && (
+                                            <div className="w-full mt-2 overflow-x-auto pb-4 pt-2 px-1 flex gap-4 snap-x custom-scrollbar">
+                                                {msg.moodCards.map((card, i) => (
+                                                    <MoodCard key={i} data={card} settings={settings} />
+                                                ))}
                                             </div>
                                         )}
                                     </div>
-
-                                    {/* 2. The Mood Cards (If Any) */}
-                                    {msg.moodCards && msg.moodCards.length > 0 && (
-                                        <div className="mt-3 w-full overflow-x-auto pb-4 pl-4 pr-4 snap-x custom-scrollbar flex gap-4">
-                                            {msg.moodCards.map((card, cIdx) => (
-                                                <MoodCard key={cIdx} data={card} settings={settings} />
-                                            ))}
-                                            <div className="w-16 flex-shrink-0"></div>
-                                        </div>
-                                    )}
                                 </div>
-                            </div>
-                        ))}
-                        
-                        {loading && (
-                            <div className="flex items-start gap-4 animate-pulse">
-                                <div className="w-10 h-10 rounded-full bg-white border border-gray-200 flex items-center justify-center">
-                                    <Bot size={20} className="text-gray-300" />
-                                </div>
-                                <div className="bg-white border border-gray-200 px-4 py-3 rounded-2xl rounded-tl-none text-gray-400 text-sm font-hand">
-                                    <div className="flex items-center gap-2">
-                                        <span>Thinking...</span>
-                                        {knowledgeFiles.length > 0 && (
-                                            <span className="text-xs text-excali-purple flex items-center gap-1">
-                                                <Library size={10} /> checking files
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                            </div>
-                        )}
-                        <div className="h-4" /> {/* Spacer */}
+                            ))}
+                        </div>
                     </div>
 
                     {/* Input Area */}
                     <div className="p-4 bg-white border-t border-gray-200">
-                        <div className="relative max-w-4xl mx-auto">
-                             {/* Image Previews (Multiple) */}
+                        <div className="max-w-4xl mx-auto flex flex-col gap-2 relative">
+                            
+                            {/* Image Previews */}
                             {chatImagePreviews.length > 0 && (
-                                <div className="mb-2 flex gap-2 overflow-x-auto custom-scrollbar pb-1">
-                                    {chatImagePreviews.map((preview, idx) => (
-                                        <div key={idx} className="relative group flex-shrink-0">
-                                            <div className="w-16 h-16 rounded-lg overflow-hidden border border-gray-200">
-                                                <img src={preview} alt="Preview" className="w-full h-full object-cover" />
-                                            </div>
+                                <div className="flex gap-3 pb-2 overflow-x-auto">
+                                    {chatImagePreviews.map((src, i) => (
+                                        <div key={i} className="relative group">
+                                            <img src={src} alt="Preview" className="h-16 w-16 object-cover rounded-lg border border-gray-200" />
                                             <button 
-                                                onClick={() => removeChatImage(idx)}
-                                                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 shadow-md hover:bg-red-600 transition-colors z-10"
+                                                onClick={() => removeChatImage(i)}
+                                                className="absolute -top-1.5 -right-1.5 bg-gray-900 text-white rounded-full p-0.5 shadow-md opacity-0 group-hover:opacity-100 transition-opacity"
                                             >
                                                 <X size={12} />
                                             </button>
@@ -640,50 +639,63 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     ))}
                                 </div>
                             )}
-                            
-                            <div className="flex items-end gap-2 w-full">
-                                <button
+
+                            <div className="flex gap-2 items-end bg-gray-50 border border-gray-200 rounded-2xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-excali-purple/20 focus-within:border-excali-purple transition-all">
+                                
+                                {/* Image Upload Button */}
+                                <button 
                                     onClick={() => fileInputRef.current?.click()}
-                                    className="p-4 bg-gray-100 text-gray-500 rounded-xl hover:bg-gray-200 hover:text-gray-700 transition-all flex-shrink-0 h-[56px] flex items-center justify-center"
-                                    title="Upload Images"
-                                    disabled={loading} // Keep disabling image upload during generation
+                                    className="p-2 text-gray-400 hover:text-excali-purple hover:bg-white rounded-xl transition-colors flex-shrink-0"
+                                    title="Add Image"
                                 >
                                     <ImageIcon size={20} />
                                 </button>
                                 <input 
-                                    type="file"
-                                    ref={fileInputRef}
+                                    type="file" 
+                                    ref={fileInputRef} 
+                                    multiple 
+                                    accept="image/*" 
+                                    className="hidden" 
                                     onChange={handleImageSelect}
-                                    className="hidden"
-                                    accept="image/*"
-                                    multiple // ENABLE MULTIPLE
                                 />
                                 
-                                <div className="relative flex-1">
-                                    <textarea
-                                        ref={textareaRef}
-                                        value={inputValue}
-                                        onChange={(e) => setInputValue(e.target.value)}
-                                        onKeyDown={handleKeyDown}
-                                        placeholder={knowledgeFiles.length ? "Ask about your documents or cultural topics..." : "Ask about colors, symbols, or history..."}
-                                        // Removed disabled={loading} to allow typing
-                                        rows={1}
-                                        className="w-full pl-5 pr-14 py-4 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-excali-purple/20 focus:border-excali-purple transition-all font-sans text-gray-700 shadow-inner resize-none overflow-y-auto min-h-[56px] max-h-32 leading-relaxed"
-                                    />
-                                    <button
-                                        onClick={handleSend}
-                                        disabled={(!inputValue.trim() && chatImages.length === 0) || loading}
-                                        className="absolute right-2 bottom-2 p-2 bg-excali-purple text-white rounded-lg hover:shadow-lg disabled:opacity-50 disabled:shadow-none transition-all active:scale-95 flex items-center justify-center h-10 w-10"
-                                    >
-                                        <Send size={20} />
-                                    </button>
-                                </div>
+                                {/* Search Toggle - OPTIMIZED: Text Label */}
+                                <button 
+                                    onClick={() => setUseSearch(!useSearch)}
+                                    className={`relative group p-2 rounded-xl transition-colors flex-shrink-0 ${useSearch ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100'}`}
+                                >
+                                    <Globe2 size={20} />
+                                    {/* Hover Tooltip */}
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                                        Web search
+                                        {/* Tiny arrow */}
+                                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                                    </div>
+                                </button>
+
+                                <textarea
+                                    ref={textareaRef}
+                                    value={inputValue}
+                                    onChange={(e) => setInputValue(e.target.value)}
+                                    onKeyDown={handleKeyDown}
+                                    placeholder="Ask about cultural symbols, meanings, or festivals..."
+                                    className="flex-1 bg-transparent border-none resize-none focus:ring-0 py-3 px-2 max-h-32 text-gray-900 placeholder-gray-500 font-sans leading-relaxed caret-excali-purple"
+                                    rows={1}
+                                />
+                                
+                                <button 
+                                    onClick={handleSend}
+                                    disabled={!inputValue.trim() && chatImages.length === 0 || loading}
+                                    className={`p-2 rounded-xl transition-all flex-shrink-0 mb-0.5 ${inputValue.trim() || chatImages.length > 0 ? 'bg-excali-purple text-white shadow-md hover:shadow-lg hover:-translate-y-0.5' : 'bg-gray-200 text-gray-400'}`}
+                                >
+                                    <Send size={20} className={loading ? 'hidden' : 'block'} />
+                                    <div className={`w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin ${loading ? 'block' : 'hidden'}`}></div>
+                                </button>
                             </div>
-                        </div>
-                        <div className="text-center mt-2 hidden sm:block">
-                             <p className="text-[10px] text-gray-400 font-sans">
-                                AI uses {knowledgeFiles.length ? 'Uploaded Docs & ' : ''} Google Search. Verify independently.
-                             </p>
+                            <div className="text-[10px] text-gray-400 px-2 flex justify-between">
+                                <span>{chatImages.length > 0 ? `${chatImages.length} images attached` : ''}</span>
+                                <span>{loading ? "Agent is thinking..." : "Press Enter to send"}</span>
+                            </div>
                         </div>
                     </div>
                 </>

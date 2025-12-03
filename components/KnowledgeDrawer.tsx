@@ -84,8 +84,8 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
                 <input 
                     type="file" 
                     className="hidden" 
-                    // Added .xlsx and .xls support as requested
-                    accept=".pdf,.csv,.txt,.md,.png,.jpg,.jpeg,.xlsx,.xls" 
+                    // Added .doc and .docx support
+                    accept=".pdf,.csv,.txt,.md,.png,.jpg,.jpeg,.xlsx,.xls,.doc,.docx" 
                     onChange={onUpload} 
                     disabled={isUploading} 
                 />
@@ -109,7 +109,7 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
           )}
           <div className="mt-2 text-[10px] text-gray-400 text-center">
               {activeTab === 'FILE' 
-                ? "Supports: PDF, Excel, CSV, TXT, Images" 
+                ? "Supports: PDF, Word, Excel, CSV, TXT, Images" 
                 : "Supports: YouTube Videos, Websites"}
           </div>
       </div>

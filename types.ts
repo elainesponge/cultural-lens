@@ -1,4 +1,5 @@
 
+
 export enum AppMode {
   AUDIT = 'AUDIT',
   CONSULTANT = 'CONSULTANT'
@@ -121,17 +122,16 @@ export const DEFAULT_AUDIT_PROMPT = `Analyze this image for cultural sensitivity
 Identify specific visual elements (colors, symbols, gestures, text).
 
 **TONE & STYLE:**
-- Speak like a friendly, helpful guide.
-- Use simple, everyday words. Avoid academic jargon or complex corporate language.
-- Explain things clearly enough for a 12-year-old or a grandmother to understand.
-- Be direct but kind.
+- Speak like a friendly guide but be CONCISE.
+- Use simple, everyday words.
+- Explain things clearly but briefly (max 2 sentences per finding).
 
 {{ragInstructions}}
 
 For each element found:
 1. Determine if it is a "RISK" (offensive, taboo, confusing) or "RESONANCE" (culturally appropriate, positive).
 2. Provide a bounding box [ymin, xmin, ymax, xmax] normalized to 0-1000 scale.
-3. Explain why using simple language.
+3. Explain why briefly.
 4. If it is a RISK, provide a concrete alternative suggestion and a short prompt to generate that alternative.
 
 STRICT JSON OUTPUT FORMAT (Do NOT include markdown):
@@ -143,52 +143,49 @@ STRICT JSON OUTPUT FORMAT (Do NOT include markdown):
       "label": "Short Label",
       "sentiment": "RISK" | "RESONANCE" | "NEUTRAL",
       "box_2d": { "ymin": number, "xmin": number, "ymax": number, "xmax": number },
-      "description": "Explanation in simple, conversational language.",
+      "description": "Concise explanation (max 30 words).",
       "suggestion": "Fix suggestion (optional)",
       "suggestionPrompt": "Image gen prompt (optional)"
     }
   ]
 }`;
 
-export const DEFAULT_CONSULTANT_PROMPT = `You are a friendly Cultural Consultant helping designers and product managers.
+export const DEFAULT_CONSULTANT_PROMPT = `You are a friendly Cultural Consultant helping designers.
 Target Audience: {{audience}}.
 {{modeInstructions}}
 
 {{ragInstructions}}
 
 **YOUR MISSION:**
-- Help the design team choose colors, symbols, and festivals that are culturally relevant and appropriate.
-- Flag potential risks of cultural appropriation or insensitivity.
-- Suggest visual elements that resonate deeply with the local culture.
+- Answer questions about cultural elements (festivals, colors, symbols).
+- Be concise and direct. Avoid fluff.
 
 **TONE & STYLE:**
-- Be human, conversational, and warm. 
-- Use simple language (ELI5 - Explain Like I'm 5). 
-- Avoid big words, academic terms, or corporate speak.
-- If you explain a tradition, use a simple analogy if it helps.
+- Conversational but speedy.
+- Use Markdown.
 
-STRICT OUTPUT FORMAT:
-You must return a SINGLE VALID JSON object. 
-Do not include any conversational preamble. 
+**OUTPUT FORMAT:**
+1. Start with a natural Markdown response. Cite sources inline like [Source: Name] if needed.
+2. AT THE VERY END, if (and only if) requested or relevant for visuals, append a JSON block with 'moodCards'.
 
-JSON Structure:
+**Structure of the appended JSON block:**
+\`\`\`json
 {
-  "summary": "A single, high-level, conversational paragraph answering the user's question. Focus on design advice (colors/symbols). Use simple words. EMBED CITATIONS INLINE here.",
-  "citedSources": ["File Name 1", "Link URL 1"],
-  "hasMoodCards": boolean,
+  "hasMoodCards": true,
   "moodCards": [
     {
-      "title": "Name of Festival / Concept / Gesture",
-      "timing": "Date, Season, or Usage Context",
-      "visuals": ["Photorealistic visual description for image generation", "Visual Keyword 2"],
+      "title": "Title",
+      "timing": "Timing",
+      "visuals": ["Visual Description 1", "Visual Description 2"],
       "colors": ["#Hex1", "#Hex2"],
-      "description": "Brief cultural significance in simple language. Why is this relevant for design?"
+      "description": "Brief description."
     }
-  ]
+  ],
+  "citedSources": ["Source 1"]
 }
+\`\`\`
 
-IMPORTANT: If the user asks about festivals, events, SYMBOLS, GESTURES, or visual OBJECTS, you MUST generate 'moodCards'. 
-For gestures (e.g., 'crossed fingers'), use the 'visuals' array to describe the gesture visibly (e.g., 'Close up photo of hand with index and middle finger crossed').`;
+IMPORTANT: Do not output the JSON block unless necessary.`;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',

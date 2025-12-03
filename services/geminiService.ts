@@ -3,7 +3,7 @@ import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile,
 
 /**
  * Helper to Resize and Compress Image for Gemini
- * Max dimension: 1024px, Format: JPEG, Quality: 0.8
+ * Max dimension: 800px (Optimized for Speed), Format: JPEG, Quality: 0.8
  */
 export const processImageForGemini = async (file: File): Promise<{ base64: string, mimeType: string }> => {
   return new Promise((resolve, reject) => {
@@ -15,8 +15,8 @@ export const processImageForGemini = async (file: File): Promise<{ base64: strin
         let width = img.width;
         let height = img.height;
         
-        // Max dimension 1024 to ensure API speed and avoid payload limits
-        const MAX_SIZE = 1024;
+        // Max dimension 800 to ensure faster processing
+        const MAX_SIZE = 800;
         if (width > MAX_SIZE || height > MAX_SIZE) {
             if (width > height) {
                 height = Math.round((height * MAX_SIZE) / width);
@@ -99,7 +99,7 @@ export const uploadKnowledgeFile = async (
   } catch (error: any) {
     console.error("File Upload Error:", error);
     if (error.toString().includes("Unsupported MIME type") || (error.message && error.message.includes("Unsupported MIME type"))) {
-        throw new Error("This file format is not supported by the API. If uploading Excel, please try saving as CSV or PDF.");
+        throw new Error("This file format is not supported by the API. If uploading Word/Excel, please try saving as PDF or CSV.");
     }
     throw error;
   }
@@ -323,6 +323,7 @@ export const generateAlternativeImage = async (
 
 /**
  * Feature 2: Cultural Consultant Chat (RAG + Web Search)
+ * UPDATED: Uses generateContentStream for faster performance
  */
 export const consultCulturalAgent = async (
   query: string, 
@@ -333,7 +334,9 @@ export const consultCulturalAgent = async (
   apiKey: string, 
   modelId: string,
   chatImagesBase64?: string[], // CHANGED: Accept array of strings
-  systemPrompt?: string
+  enableSearch: boolean = false, // OPTIMIZATION: Toggle search to improve speed
+  systemPrompt?: string,
+  onStreamUpdate?: (partialText: string) => void
 ): Promise<{ text: string, moodCards?: MoodCardData[], citedSources?: string[], groundingMetadata?: any }> => {
   if (!apiKey) return { text: "API Key Missing. Please configure it in settings." };
 
@@ -343,7 +346,7 @@ export const consultCulturalAgent = async (
   
   const modeInstructions = level === ConsultantLevel.FAST 
     ? "FAST MODE: Be simple and quick. Give practical colors (Hex codes) and clear icons immediately." 
-    : "DEEP MODE: Explain the history and meaning, but use simple storytelling language (no complex words).";
+    : "DEEP MODE: Explain the history and meaning, but keep it concise.";
 
   // Split into Files vs Links
   const files = knowledgeFiles.filter(f => f.sourceType === 'FILE');
@@ -355,15 +358,13 @@ export const consultCulturalAgent = async (
       ragInstructions = `
       PRIORITY SOURCES:
       1. Attached Files: ${files.map(f => f.name).join(", ")}.
-      2. External Links (use googleSearch): ${links.map(l => l.name).join(", ")}.
+      ${enableSearch ? `2. External Links (use googleSearch): ${links.map(l => l.name).join(", ")}.` : ""}
       
       INSTRUCTION:
       - FIRST check the Attached Files for answers.
-      - THEN check the External Links using 'googleSearch'.
-      - ONLY if the answer is NOT in these sources, broaden search to general web.
+      ${enableSearch ? `- THEN check the External Links using 'googleSearch'.` : ""}
       - CITATION RULE: You MUST cite your sources INLINE immediately following the information retrieved. 
         Format: "...fact (Source: Filename)" or "...fact (Source: URL)".
-        Do NOT list sources at the end if they are already cited inline.
       `;
   }
 
@@ -396,7 +397,7 @@ export const consultCulturalAgent = async (
         }
     });
 
-    // Add user uploaded images (Chat Images) - CHANGED: Iterate array
+    // Add user uploaded images (Chat Images)
     if (chatImagesBase64 && chatImagesBase64.length > 0) {
         chatImagesBase64.forEach(img => {
              parts.push({
@@ -419,72 +420,77 @@ export const consultCulturalAgent = async (
     
     const fullContents = [...historyContents, userContent];
 
-    let response;
+    let resultStream;
     
-    // ATTEMPT 1: With Tools (Search)
+    // Config Tools based on user preference
+    const tools = enableSearch ? [{ googleSearch: {} }] : undefined;
+
     try {
-        response = await ai.models.generateContent({
+        resultStream = await ai.models.generateContentStream({
             model: modelId,
-            contents: fullContents, // Pass array of contents
+            contents: fullContents,
             config: {
                 systemInstruction,
-                // Always enable search if we have links or generic questions
-                tools: [{ googleSearch: {} }]
+                tools: tools
             }
         });
-    } catch (toolError) {
-        console.warn("Consultant: Google Search failed, retrying without tools...", toolError);
-        
-        // ATTEMPT 2: Fallback without Tools
-        try {
-            response = await ai.models.generateContent({
-                model: modelId,
-                contents: fullContents,
-                config: {
-                    systemInstruction,
-                    // No tools
-                }
-            });
-        } catch (fallbackError) {
-            console.error("Consultant: Fallback failed", fallbackError);
-            throw fallbackError;
-        }
+    } catch (err) {
+        console.error("Consultant: Streaming failed", err);
+        throw err;
     }
 
-    let jsonText = response.text || "";
-    
-    // ROBUST JSON EXTRACTION
-    const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-        jsonText = jsonMatch[0];
-    } else {
-        jsonText = jsonText.trim();
-        if (jsonText.startsWith('```json')) {
-            jsonText = jsonText.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-        } else if (jsonText.startsWith('```')) {
-            jsonText = jsonText.replace(/^```\s*/, '').replace(/\s*```$/, '');
-        }
-    }
+    // Process Stream
+    let finalStreamText = '';
+    let groundingMetadata;
 
-    let data;
     try {
-        data = JSON.parse(jsonText);
-    } catch (parseError) {
-        console.warn("Failed to parse JSON, returning raw text", parseError);
-        return { text: response.text || "Error parsing response.", moodCards: undefined };
+        // Fix: Iterate over resultStream directly, not resultStream.stream
+        for await (const chunk of resultStream) {
+            const textChunk = chunk.text;
+            if (textChunk) {
+                finalStreamText += textChunk;
+                if (onStreamUpdate) {
+                    onStreamUpdate(finalStreamText);
+                }
+            }
+            if (chunk.candidates?.[0]?.groundingMetadata) {
+                groundingMetadata = chunk.candidates[0].groundingMetadata;
+            }
+        }
+    } catch (streamErr) {
+        console.error("Error during streaming", streamErr);
+        throw streamErr;
     }
-    
-    let finalText = data.summary || data.textResponse || "Here is the information you requested.";
-    
-    let validCitations = data.citedSources || [];
-    if (knowledgeFiles.length === 0) {
-        validCitations = [];
+
+    // Post-Processing: Extract JSON Block for Mood Cards
+    let finalText = finalStreamText;
+    let moodCards: MoodCardData[] | undefined;
+    let citedSources: string[] | undefined;
+
+    // Regex to find the LAST valid JSON block in the text (often at end)
+    const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```\s*$/;
+    const match = finalStreamText.match(jsonBlockRegex);
+
+    if (match) {
+        try {
+            const jsonStr = match[1];
+            const data = JSON.parse(jsonStr);
+            
+            if (data.moodCards) moodCards = data.moodCards;
+            if (data.citedSources) citedSources = data.citedSources;
+            
+            // Clean the JSON from the displayed text
+            finalText = finalStreamText.replace(jsonBlockRegex, '').trim();
+        } catch (e) {
+            console.warn("Failed to parse appended JSON structure", e);
+            // We leave text as is if parsing fails
+        }
     }
 
     return {
       text: finalText,
-      moodCards: data.hasMoodCards ? data.moodCards : undefined,
-      citedSources: validCitations,
-      groundingMetadata: response.candidates?.[0]?.groundingMetadata
+      moodCards: moodCards,
+      citedSources: citedSources,
+      groundingMetadata: groundingMetadata
     };
 };

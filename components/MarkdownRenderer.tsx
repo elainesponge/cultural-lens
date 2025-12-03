@@ -6,7 +6,7 @@ const parseBold = (text: string) => {
   return parts.map((part, i) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return (
-        <strong key={i} className="font-bold text-gray-900">
+        <strong key={i} className="font-bold text-inherit">
           {part.slice(2, -2)}
         </strong>
       );
@@ -31,10 +31,10 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
       elements.push(
         <ul
           key={`${keyPrefix}-list`}
-          className="list-disc pl-5 mb-4 space-y-2 marker:text-gray-400"
+          className="list-disc pl-5 mb-4 space-y-1 marker:opacity-60"
         >
           {currentList.map((item, liIdx) => (
-            <li key={liIdx} className="pl-1 text-gray-700 leading-relaxed">
+            <li key={liIdx} className="pl-1 leading-relaxed text-inherit">
               {parseBold(item)}
             </li>
           ))}
@@ -64,13 +64,13 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
     // 3. Handle Headings
     if (trimmed.startsWith('### ')) {
       elements.push(
-        <h3 key={`h3-${index}`} className="text-lg font-bold text-gray-900 mt-6 mb-2">
+        <h3 key={`h3-${index}`} className="text-lg font-bold mt-5 mb-2 text-inherit">
           {parseBold(trimmed.substring(4))}
         </h3>
       );
     } else if (trimmed.startsWith('## ')) {
       elements.push(
-        <h2 key={`h2-${index}`} className="text-xl font-bold text-gray-900 mt-6 mb-3">
+        <h2 key={`h2-${index}`} className="text-xl font-bold mt-6 mb-3 text-inherit">
           {parseBold(trimmed.substring(3))}
         </h2>
       );
@@ -79,16 +79,16 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
       // Check if it's a standalone bold line which often acts as a subheader
       if (trimmed.startsWith('**') && trimmed.endsWith('**')) {
          elements.push(
-            <p key={`p-bold-${index}`} className="font-bold text-gray-900 mb-2 mt-4 block">
+            <p key={`p-${index}`} className="font-bold mb-2 text-inherit">
               {parseBold(trimmed)}
             </p>
          );
       } else {
-         elements.push(
-            <p key={`p-${index}`} className="mb-3 text-gray-700 leading-relaxed">
-              {parseBold(trimmed)}
-            </p>
-         );
+        elements.push(
+          <p key={`p-${index}`} className="mb-3 leading-relaxed text-inherit last:mb-0">
+            {parseBold(trimmed)}
+          </p>
+        );
       }
     }
   });
@@ -96,7 +96,7 @@ const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content }) => {
   // Flush any remaining list items at the end
   flushList('end');
 
-  return <div className="markdown-body text-[15px] font-sans">{elements}</div>;
+  return <div className="text-sm md:text-base text-inherit">{elements}</div>;
 };
 
 export default MarkdownRenderer;
