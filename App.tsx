@@ -65,7 +65,7 @@ function App() {
       const newFile: KnowledgeFile = {
           id: Date.now().toString(),
           name: file.name,
-          mimeType: file.type,
+          mimeType: file.type, // Initial value, will be updated by service response
           sourceType: 'FILE',
           status: 'UPLOADING'
       };
@@ -74,8 +74,9 @@ function App() {
       setIsUploadingFile(true);
 
       try {
-          const uri = await uploadKnowledgeFile(file, settings.apiKey);
-          setKnowledgeFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: 'READY', uri: uri } : f));
+          // Destructure mimeType from response to ensure we have the correct API-compatible type
+          const { uri, mimeType } = await uploadKnowledgeFile(file, settings.apiKey);
+          setKnowledgeFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: 'READY', uri, mimeType } : f));
       } catch (error) {
           setKnowledgeFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: 'ERROR' } : f));
           alert("Failed to upload knowledge file. Please check API key.");
