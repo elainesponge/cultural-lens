@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { AuditResult, Sentiment, AuditSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { performCulturalAudit, generateAlternativeImage, processImageForGemini } from '../services/geminiService';
@@ -163,8 +164,8 @@ const AuditView: React.FC<AuditViewProps> = ({
           cleanBase64, 
           contextRegions, 
           knowledgeFiles, // Use global files
-          settings.apiKey, 
           settings.generalModel,
+          settings.apiKey, // PASS API KEY
           settings.auditSystemPrompt // Pass custom prompt
       );
       
@@ -176,7 +177,7 @@ const AuditView: React.FC<AuditViewProps> = ({
       saveToHistory(data, imageBase64, selectedRegions);
 
     } catch (e: any) {
-      alert(`Analysis Failed: ${e.message || "Unknown error"}. Check API key or try a different image.`);
+      alert(`Analysis Failed: ${e.message || "Unknown error"}. Try a different image.`);
     } finally {
       setIsAnalyzing(false);
     }
@@ -185,7 +186,7 @@ const AuditView: React.FC<AuditViewProps> = ({
   const handleGenerateFix = async (annotationId: string, prompt: string) => {
     setGeneratingId(annotationId);
     try {
-      const newImageUrl = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
+      const newImageUrl = await generateAlternativeImage(prompt, settings.imageModel, settings.apiKey);
       setGeneratedAlternatives(prev => ({ ...prev, [annotationId]: newImageUrl }));
     } catch (e) {
       alert("Failed to generate alternative.");

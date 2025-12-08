@@ -1,5 +1,4 @@
 
-
 export enum AppMode {
   AUDIT = 'AUDIT',
   CONSULTANT = 'CONSULTANT'
@@ -195,3 +194,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   auditSystemPrompt: DEFAULT_AUDIT_PROMPT,
   consultantSystemPrompt: DEFAULT_CONSULTANT_PROMPT
 };
+
+// Extend Window interface for AI Studio environment
+declare global {
+  interface Window {
+    mammoth?: any;
+    // aistudio is already declared in the global scope
+  }
+}

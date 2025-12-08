@@ -1,3 +1,4 @@
+
 import React, { useEffect, useState } from 'react';
 import { MoodCardData, AppSettings } from '../types';
 import { Calendar, Palette, Search, Image as ImageIcon, RotateCw, AlertTriangle } from 'lucide-react';
@@ -24,7 +25,7 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
         try {
             // Prompt engineered to look like a real photo or reference image
             const prompt = `A detailed, photorealistic reference photograph of ${data.title}. Elements: ${data.visuals.join(", ")}. High quality, documentary style, clear focus.`;
-            const url = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
+            const url = await generateAlternativeImage(prompt, settings.imageModel, settings.apiKey);
             setSnapshotUrl(url);
         } catch (e: any) {
             console.error("Failed to fetch visual", e);
@@ -43,7 +44,7 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
         fetchVisuals();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.title, visualsKey, settings.apiKey, settings.imageModel, hasVisuals]);
+  }, [data.title, visualsKey, settings.imageModel, hasVisuals]);
 
   return (
     <div className="flex-shrink-0 w-[300px] bg-white border border-gray-200 rounded-xl shadow-sketch hover:shadow-sketch-lg hover:-translate-y-1 transition-all duration-200 group snap-start flex flex-col relative overflow-hidden">

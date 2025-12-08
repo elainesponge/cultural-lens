@@ -245,7 +245,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             updatedSession.level,
             updatedSession.audience,
             knowledgeFiles, 
-            settings.apiKey,
             settings.generalModel,
             imagesBase64,
             useSearch, // Pass search toggle state
@@ -266,7 +265,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         return s;
                     });
                 });
-            }
+            },
+            settings.apiKey // PASS API KEY
         );
 
         // 4. Final Update (Cleaned Text + Mood Cards)
@@ -303,7 +303,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                      if (lastMsgIdx >= 0 && msgs[lastMsgIdx].isTyping) {
                          msgs[lastMsgIdx] = {
                              ...msgs[lastMsgIdx],
-                             text: "Sorry, I encountered an error while connecting to the service. Please check your API key and connection.",
+                             text: "Sorry, I encountered an error while connecting to the service. Please check your connection and API Key.",
                              isTyping: false
                          };
                      }

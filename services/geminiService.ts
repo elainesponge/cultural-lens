@@ -1,5 +1,14 @@
+
 import { GoogleGenAI, Part, Content } from "@google/genai";
 import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
+
+// Helper to get effective API key (Environment > Manual)
+// We prioritize process.env.API_KEY because it comes from the "Connect Google Account" flow
+// which authorizes restricted models like Gemini 3.0 Pro. Manual keys often lack these permissions.
+const getEffectiveApiKey = (manualKey?: string) => {
+    if (process.env.API_KEY) return process.env.API_KEY;
+    return manualKey || "";
+};
 
 /**
  * Helper to determine MIME type from extension if browser fails
@@ -69,22 +78,15 @@ export const processImageForGemini = async (file: File): Promise<{ base64: strin
 };
 
 /**
- * Deprecated: Use processImageForGemini instead
- */
-export const fileToGenerativePart = async (file: File): Promise<string> => {
-    const result = await processImageForGemini(file);
-    return result.base64;
-};
-
-/**
  * Uploads a file to Gemini Files API and waits for it to be ACTIVE.
  * Returns both URI and corrected MIME type.
  */
 export const uploadKnowledgeFile = async (
-  file: File, 
+  file: File,
   apiKey: string
 ): Promise<{ uri: string, mimeType: string }> => {
-  if (!apiKey) throw new Error("API Key is required");
+  const effectiveKey = getEffectiveApiKey(apiKey);
+  if (!effectiveKey) throw new Error("API Key is missing.");
 
   let fileToUpload = file;
   const ext = file.name.split('.').pop()?.toLowerCase();
@@ -115,7 +117,7 @@ export const uploadKnowledgeFile = async (
       throw new Error(`.${ext} files are not supported directly. Please convert to PDF or .docx first.`);
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
 
   try {
     // 1. Upload
@@ -163,8 +165,9 @@ export const uploadKnowledgeFile = async (
  * Test API Connection
  */
 export const testApiConnection = async (apiKey: string): Promise<boolean> => {
-  if (!apiKey) return false;
-  const ai = new GoogleGenAI({ apiKey });
+  const effectiveKey = getEffectiveApiKey(apiKey);
+  if (!effectiveKey) return false;
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
   try {
     await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -195,13 +198,14 @@ export const performCulturalAudit = async (
   base64Image: string, 
   regions: string[], 
   knowledgeFiles: KnowledgeFile[],
-  apiKey: string, 
   modelId: string,
+  apiKey: string,
   systemPrompt?: string
 ): Promise<AuditResult> => {
-  if (!apiKey) throw new Error("API Key is required");
+  const effectiveKey = getEffectiveApiKey(apiKey);
+  if (!effectiveKey) throw new Error("API Key is missing.");
   
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
   
   const regionString = regions.length > 0 ? regions.join(", ") : "Global";
 
@@ -303,8 +307,11 @@ export const performCulturalAudit = async (
     
     return result;
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Audit Error:", error);
+    if (error.message?.includes("PERMISSION_DENIED")) {
+        throw new Error("Permission Denied: Please use the 'Connect Google Account' button in settings to authorize the Pro model.");
+    }
     throw error;
   }
 };
@@ -314,12 +321,13 @@ export const performCulturalAudit = async (
  */
 export const generateAlternativeImage = async (
   prompt: string, 
-  apiKey: string, 
-  modelId: string
+  modelId: string,
+  apiKey: string
 ): Promise<string> => {
-  if (!apiKey) throw new Error("API Key is required");
+  const effectiveKey = getEffectiveApiKey(apiKey);
+  if (!effectiveKey) throw new Error("API Key is missing.");
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
 
   const imageConfig: any = {
       aspectRatio: "1:1",
@@ -356,6 +364,9 @@ export const generateAlternativeImage = async (
     throw new Error("No image data found in response.");
   } catch (error: any) {
     console.error("Generation Error:", error);
+    if (error.message?.includes("PERMISSION_DENIED") || error.toString().includes("403")) {
+        throw new Error("Permission Denied: Gemini 3.0 Pro requires you to click 'Connect Google Account' in settings.");
+    }
     throw new Error(error.message || "Failed to generate image.");
   }
 };
@@ -369,16 +380,17 @@ export const consultCulturalAgent = async (
   level: ConsultantLevel,
   audience: string[],
   knowledgeFiles: KnowledgeFile[], 
-  apiKey: string, 
   modelId: string,
-  chatImagesBase64?: string[],
-  enableSearch: boolean = false,
-  systemPrompt?: string,
-  onStreamUpdate?: (partialText: string) => void
+  chatImagesBase64: string[] | undefined,
+  enableSearch: boolean,
+  systemPrompt: string | undefined,
+  onStreamUpdate: ((partialText: string) => void) | undefined,
+  apiKey: string
 ): Promise<{ text: string, moodCards?: MoodCardData[], citedSources?: string[], groundingMetadata?: any }> => {
-  if (!apiKey) return { text: "API Key Missing. Please configure it in settings." };
+  const effectiveKey = getEffectiveApiKey(apiKey);
+  if (!effectiveKey) return { text: "API Key Missing. Please enter your API key in settings or connect your account." };
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
   
   const audienceStr = audience.length > 0 ? audience.join(", ") : "Global/General";
   
@@ -462,8 +474,11 @@ export const consultCulturalAgent = async (
                 tools: tools
             }
         });
-    } catch (err) {
+    } catch (err: any) {
         console.error("Consultant: Streaming failed", err);
+        if (err.message?.includes("PERMISSION_DENIED")) {
+             return { text: "Error: Permission Denied. To use this model, please go to Settings and click 'Connect Google Account'." };
+        }
         throw err;
     }
 
