@@ -1,7 +1,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { MoodCardData, AppSettings } from '../types';
-import { Calendar, Palette, Search, Image as ImageIcon, RotateCw, AlertTriangle } from 'lucide-react';
+import { Calendar, Palette, Search, Image as ImageIcon, RotateCw, AlertTriangle, Key } from 'lucide-react';
 import { generateAlternativeImage } from '../services/geminiService';
 
 const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ data, settings }) => {
@@ -15,6 +15,20 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
   // Create a stable key for visuals to prevent dependency loop/flicker
   const visualsKey = hasVisuals ? data.visuals.join(',') : '';
 
+  const handleConnectGoogle = async () => {
+        if (window.aistudio?.openSelectKey) {
+            try {
+                await window.aistudio.openSelectKey();
+                setGenError(null);
+                fetchVisuals(); // Retry
+            } catch (e) {
+                console.error("Failed to open key selector", e);
+            }
+        } else {
+            alert("Key selection is not supported here. Please check Settings.");
+        }
+  };
+
   const fetchVisuals = async () => {
         if (!hasVisuals) return;
         
@@ -25,12 +39,13 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
         try {
             // Prompt engineered to look like a real photo or reference image
             const prompt = `A detailed, photorealistic reference photograph of ${data.title}. Elements: ${data.visuals.join(", ")}. High quality, documentary style, clear focus.`;
-            const url = await generateAlternativeImage(prompt, settings.imageModel, settings.apiKey);
+            const url = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
             setSnapshotUrl(url);
         } catch (e: any) {
             console.error("Failed to fetch visual", e);
             let msg = "Generation failed";
-            if (e.message?.includes("safety")) msg = "Blocked by Safety";
+            if (e.message?.includes("PERMISSION_DENIED")) msg = "PERMISSION_DENIED";
+            else if (e.message?.includes("safety")) msg = "Blocked by Safety";
             else if (e.message?.includes("429")) msg = "Rate Limit";
             setGenError(msg);
         } finally {
@@ -44,7 +59,7 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
         fetchVisuals();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.title, visualsKey, settings.imageModel, hasVisuals]);
+  }, [data.title, visualsKey, settings.apiKey, settings.imageModel, hasVisuals]);
 
   return (
     <div className="flex-shrink-0 w-[300px] bg-white border border-gray-200 rounded-xl shadow-sketch hover:shadow-sketch-lg hover:-translate-y-1 transition-all duration-200 group snap-start flex flex-col relative overflow-hidden">
@@ -88,7 +103,20 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
                     </>
                 ) : (
                     <div className="flex flex-col items-center gap-3 text-gray-400 w-full h-full justify-center p-4 text-center">
-                         {genError ? (
+                         {genError === "PERMISSION_DENIED" ? (
+                            <div className="flex flex-col items-center">
+                                <Key size={24} className="text-red-300 mb-2" />
+                                <span className="text-[10px] font-bold text-red-400 uppercase mb-2">Access Denied</span>
+                                {window.aistudio && (
+                                    <button 
+                                        onClick={handleConnectGoogle}
+                                        className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded hover:bg-red-200"
+                                    >
+                                        Connect Google
+                                    </button>
+                                )}
+                            </div>
+                         ) : genError ? (
                             <>
                                 <AlertTriangle size={24} className="text-red-300" />
                                 <span className="text-xs font-bold text-red-400 uppercase">{genError}</span>

@@ -1,4 +1,5 @@
 
+
 export enum AppMode {
   AUDIT = 'AUDIT',
   CONSULTANT = 'CONSULTANT'
@@ -64,6 +65,7 @@ export interface KnowledgeFile {
   mimeType?: string; // Optional for links
   uri?: string; // Gemini File URI (only for files)
   status: 'UPLOADING' | 'PROCESSING' | 'READY' | 'ERROR';
+  isActive: boolean; // Controls if this specific file is used in context
 }
 
 // History & Session Types
@@ -195,10 +197,26 @@ export const DEFAULT_SETTINGS: AppSettings = {
   consultantSystemPrompt: DEFAULT_CONSULTANT_PROMPT
 };
 
-// Extend Window interface for AI Studio environment
+// --- Type Augmentation for Environment & AI Studio ---
 declare global {
-  interface Window {
-    mammoth?: any;
-    // aistudio is already declared in the global scope
+  // Augment ImportMeta for Vite environment variables
+  interface ImportMeta {
+    env: {
+      VITE_GEMINI_API_KEY?: string;
+      [key: string]: any;
+    };
+  }
+
+  // Augment AIStudio interface (if it exists) instead of declaring conflicting Window property
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+
+  // Augment ProcessEnv to ensure API_KEY is typed, without redeclaring 'process'
+  namespace NodeJS {
+    interface ProcessEnv {
+      API_KEY?: string;
+    }
   }
 }

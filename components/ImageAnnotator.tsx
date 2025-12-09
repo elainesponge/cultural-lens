@@ -41,7 +41,8 @@ const ImageAnnotator: React.FC<ImageAnnotatorProps> = ({
         
         // Colors
         const mainColor = isRisk ? '#f87171' : '#4ade80'; // Soft Red vs Soft Green
-        const zIndex = isSelected ? 40 : 30;
+        // Lowered Z-index to ensure it sits behind the sidebar (z-30)
+        const zIndex = isSelected ? 20 : 10;
 
         return (
           <div

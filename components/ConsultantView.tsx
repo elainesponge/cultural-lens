@@ -1,8 +1,7 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, ConsultantLevel, ChatSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { consultCulturalAgent, processImageForGemini } from '../services/geminiService';
-import { Send, User, Bot, MessageSquare, Plus, Globe, CheckSquare, Square, ChevronRight, Trash2, Zap, BookOpen, Library, FileText, ExternalLink, Search, Image as ImageIcon, X, Edit, Globe2 } from 'lucide-react';
+import { Send, User, Bot, MessageSquare, Plus, Globe, CheckSquare, Square, ChevronRight, Trash2, Zap, BookOpen, Library, FileText, ExternalLink, Search, Image as ImageIcon, X, Edit, Globe2, Key } from 'lucide-react';
 import MoodCard from './MoodCard';
 import MarkdownRenderer from './MarkdownRenderer';
 import KnowledgeDrawer from './KnowledgeDrawer';
@@ -13,6 +12,8 @@ interface ConsultantViewProps {
   onUploadKnowledge: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddLink: (url: string) => void;
   onRemoveKnowledge: (id: string) => void;
+  onToggleKnowledgeActive?: (id: string) => void;
+  onToggleAllKnowledge?: (active: boolean) => void;
   isUploadingKnowledge: boolean;
 }
 
@@ -22,6 +23,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     onUploadKnowledge,
     onAddLink,
     onRemoveKnowledge,
+    onToggleKnowledgeActive,
+    onToggleAllKnowledge,
     isUploadingKnowledge
 }) => {
   // Session Management
@@ -36,6 +39,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
   const [useSearch, setUseSearch] = useState(false); // Default to false for speed
+  const [useKnowledgeBase, setUseKnowledgeBase] = useState(true); // Master Toggle for RAG
   
   // Image Input State (Multiple)
   const [chatImages, setChatImages] = useState<File[]>([]);
@@ -52,6 +56,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
 
   // Knowledge Base UI State
   const [showKnowledge, setShowKnowledge] = useState(false);
+
+  const activeKnowledgeCount = knowledgeFiles.filter(f => f.isActive).length;
 
   // Load Sessions from LocalStorage
   useEffect(() => {
@@ -178,6 +184,19 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
       if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  const handleConnectGoogle = async () => {
+      if (window.aistudio?.openSelectKey) {
+          try {
+              await window.aistudio.openSelectKey();
+              alert("Connected! Please try sending your message again.");
+          } catch (e) {
+              console.error("Failed to open key selector", e);
+          }
+      } else {
+          alert("Key selection is not supported here. Please enter a valid API key in Settings.");
+      }
+  };
+
   const handleSend = async () => {
     if (loading) return; // Prevent send if already loading
     if ((!inputValue.trim() && chatImages.length === 0) || !currentSession) return;
@@ -237,6 +256,9 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     try {
         // We capture currentSessionId in a const closure to use inside the callback
         const activeSessionId = currentSessionId;
+        
+        // APPLY MASTER SWITCH: If useKnowledgeBase is false, send empty array, otherwise send full list (service filters by isActive)
+        const effectiveFiles = useKnowledgeBase ? knowledgeFiles : [];
 
         const response = await consultCulturalAgent(
             currentInput || (imagesBase64.length > 0 ? "Analyze these images" : ""), 
@@ -244,7 +266,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             updatedSession.messages.slice(0, -1), 
             updatedSession.level,
             updatedSession.audience,
-            knowledgeFiles, 
+            effectiveFiles, 
+            settings.apiKey,
             settings.generalModel,
             imagesBase64,
             useSearch, // Pass search toggle state
@@ -265,8 +288,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         return s;
                     });
                 });
-            },
-            settings.apiKey // PASS API KEY
+            }
         );
 
         // 4. Final Update (Cleaned Text + Mood Cards)
@@ -291,7 +313,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
              });
         });
 
-    } catch (error) {
+    } catch (error: any) {
         console.error("Chat Error:", error);
         // Remove the placeholder if failed, or show error message
         setSessions(prevSessions => {
@@ -301,9 +323,15 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                      const lastMsgIdx = msgs.length - 1;
                      // If the last message was our placeholder (still typing), update it to error
                      if (lastMsgIdx >= 0 && msgs[lastMsgIdx].isTyping) {
+                         // Check for specific permission error
+                         const isPermError = error.message === "PERMISSION_DENIED_PRO_MODEL";
+                         const errorMsg = isPermError 
+                            ? "ERROR_PERM_DENIED" // Special flag for renderer
+                            : "Sorry, I encountered an error while connecting to the service. Please check your API key and connection.";
+                         
                          msgs[lastMsgIdx] = {
                              ...msgs[lastMsgIdx],
-                             text: "Sorry, I encountered an error while connecting to the service. Please check your connection and API Key.",
+                             text: errorMsg,
                              isTyping: false
                          };
                      }
@@ -427,6 +455,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                 onUpload={onUploadKnowledge}
                 onAddLink={onAddLink}
                 onRemove={onRemoveKnowledge}
+                onToggleActive={onToggleKnowledgeActive}
+                onToggleAll={onToggleAllKnowledge}
                 isUploading={isUploadingKnowledge}
                 description="Upload brand guidelines, color palettes, or research documents here."
             />
@@ -540,6 +570,11 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                             >
                                 <Library size={14} />
                                 <span className="hidden sm:inline">Knowledge</span>
+                                {activeKnowledgeCount > 0 && (
+                                    <span className={`px-1.5 rounded-full text-[10px] ${showKnowledge ? 'bg-white text-excali-purple' : 'bg-gray-200 text-gray-600'}`}>
+                                        {activeKnowledgeCount}
+                                    </span>
+                                )}
                             </button>
                         </div>
                     </div>
@@ -573,7 +608,27 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                                     <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
                                                 </div>
                                             ) : (
-                                                <MarkdownRenderer content={msg.text || ""} />
+                                                <>
+                                                    {msg.text === "ERROR_PERM_DENIED" ? (
+                                                        <div className="flex flex-col gap-2 text-red-600">
+                                                            <div className="flex items-center gap-2 font-bold">
+                                                                <Key size={16} /> Access Denied
+                                                            </div>
+                                                            <p className="text-sm">The selected model (Gemini 3.0 Pro) requires a connected Google Account.</p>
+                                                            {window.aistudio && (
+                                                                <button 
+                                                                    onClick={handleConnectGoogle}
+                                                                    className="mt-1 bg-white text-gray-700 border border-gray-300 px-3 py-1.5 rounded-full text-xs font-bold hover:bg-gray-50 transition-colors self-start flex items-center gap-2 shadow-sm"
+                                                                >
+                                                                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="h-4 w-4" />
+                                                                    Continue with Google
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <MarkdownRenderer content={msg.text || ""} />
+                                                    )}
+                                                </>
                                             )}
 
                                             {/* Source Citations */}
@@ -658,6 +713,20 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     className="hidden" 
                                     onChange={handleImageSelect}
                                 />
+
+                                {/* Knowledge Toggle Button */}
+                                <button 
+                                    onClick={() => setUseKnowledgeBase(!useKnowledgeBase)}
+                                    disabled={activeKnowledgeCount === 0}
+                                    className={`relative group p-2 rounded-xl transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${useKnowledgeBase ? 'bg-excali-purpleLight/30 text-excali-purple border border-excali-purpleLight' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100'}`}
+                                >
+                                    <BookOpen size={20} />
+                                    {/* Hover Tooltip */}
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
+                                        {useKnowledgeBase ? 'Use Knowledge Base' : 'Ignore Knowledge Base'}
+                                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
+                                    </div>
+                                </button>
                                 
                                 {/* Search Toggle - OPTIMIZED: Text Label */}
                                 <button 
@@ -668,7 +737,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     {/* Hover Tooltip */}
                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                                         Web search
-                                        {/* Tiny arrow */}
                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
                                     </div>
                                 </button>

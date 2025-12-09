@@ -1,14 +1,7 @@
 
+
 import { GoogleGenAI, Part, Content } from "@google/genai";
 import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
-
-// Helper to get effective API key (Environment > Manual)
-// We prioritize process.env.API_KEY because it comes from the "Connect Google Account" flow
-// which authorizes restricted models like Gemini 3.0 Pro. Manual keys often lack these permissions.
-const getEffectiveApiKey = (manualKey?: string) => {
-    if (process.env.API_KEY) return process.env.API_KEY;
-    return manualKey || "";
-};
 
 /**
  * Helper to determine MIME type from extension if browser fails
@@ -26,6 +19,24 @@ export const getMimeTypeFromExtension = (filename: string): string => {
         case 'docx': return 'text/plain'; // Converted to text
         default: return 'application/octet-stream';
     }
+};
+
+/**
+ * Helper: Get Effective API Key
+ * Prioritizes Environment Key (AI Studio/IDX) > Vite Env Key > Manual Settings Key
+ */
+const getEffectiveApiKey = (manualKey: string): string => {
+    // 1. Check process.env (AI Studio / IDX)
+    // We use a safe check to avoid ReferenceError in browsers where process is not defined
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+        return process.env.API_KEY;
+    }
+    // 2. Check Vite Environment Variable
+    if (import.meta && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
+        return import.meta.env.VITE_GEMINI_API_KEY;
+    }
+    // 3. Fallback to manually entered key
+    return manualKey;
 };
 
 /**
@@ -78,15 +89,23 @@ export const processImageForGemini = async (file: File): Promise<{ base64: strin
 };
 
 /**
+ * Deprecated: Use processImageForGemini instead
+ */
+export const fileToGenerativePart = async (file: File): Promise<string> => {
+    const result = await processImageForGemini(file);
+    return result.base64;
+};
+
+/**
  * Uploads a file to Gemini Files API and waits for it to be ACTIVE.
  * Returns both URI and corrected MIME type.
  */
 export const uploadKnowledgeFile = async (
-  file: File,
+  file: File, 
   apiKey: string
 ): Promise<{ uri: string, mimeType: string }> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
-  if (!effectiveKey) throw new Error("API Key is missing.");
+  if (!effectiveKey) throw new Error("API Key is required");
 
   let fileToUpload = file;
   const ext = file.name.split('.').pop()?.toLowerCase();
@@ -157,6 +176,10 @@ export const uploadKnowledgeFile = async (
     if (error.toString().includes("Unsupported MIME type") || (error.message && error.message.includes("Unsupported MIME type"))) {
         throw new Error("This file format is not supported by the API.");
     }
+    // Check for Permission Denied (403)
+    if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
+        throw new Error("PERMISSION_DENIED_PRO_MODEL");
+    }
     throw error;
   }
 };
@@ -167,6 +190,7 @@ export const uploadKnowledgeFile = async (
 export const testApiConnection = async (apiKey: string): Promise<boolean> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
   if (!effectiveKey) return false;
+  
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
   try {
     await ai.models.generateContent({
@@ -198,24 +222,25 @@ export const performCulturalAudit = async (
   base64Image: string, 
   regions: string[], 
   knowledgeFiles: KnowledgeFile[],
+  apiKey: string, 
   modelId: string,
-  apiKey: string,
   systemPrompt?: string
 ): Promise<AuditResult> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
-  if (!effectiveKey) throw new Error("API Key is missing.");
+  if (!effectiveKey) throw new Error("API Key is required");
   
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
   
   const regionString = regions.length > 0 ? regions.join(", ") : "Global";
 
-  // Split into Files vs Links
-  const files = knowledgeFiles.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
-  const links = knowledgeFiles.filter(f => f.sourceType === 'LINK');
+  // Split into Files vs Links - FILTER BY isActive
+  const activeKnowledge = knowledgeFiles.filter(f => f.isActive);
+  const files = activeKnowledge.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
+  const links = activeKnowledge.filter(f => f.sourceType === 'LINK');
 
   // Construct Prompt with RAG Context
   let ragInstructions = "";
-  if (knowledgeFiles.length > 0) {
+  if (activeKnowledge.length > 0) {
       ragInstructions = `
       CONTEXT FROM ATTACHED FILES & LINKS:
       You have access to attached knowledge base files and links.
@@ -309,8 +334,8 @@ export const performCulturalAudit = async (
 
   } catch (error: any) {
     console.error("Audit Error:", error);
-    if (error.message?.includes("PERMISSION_DENIED")) {
-        throw new Error("Permission Denied: Please use the 'Connect Google Account' button in settings to authorize the Pro model.");
+    if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
+        throw new Error("PERMISSION_DENIED_PRO_MODEL");
     }
     throw error;
   }
@@ -321,11 +346,11 @@ export const performCulturalAudit = async (
  */
 export const generateAlternativeImage = async (
   prompt: string, 
-  modelId: string,
-  apiKey: string
+  apiKey: string, 
+  modelId: string
 ): Promise<string> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
-  if (!effectiveKey) throw new Error("API Key is missing.");
+  if (!effectiveKey) throw new Error("API Key is required");
 
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
 
@@ -364,8 +389,8 @@ export const generateAlternativeImage = async (
     throw new Error("No image data found in response.");
   } catch (error: any) {
     console.error("Generation Error:", error);
-    if (error.message?.includes("PERMISSION_DENIED") || error.toString().includes("403")) {
-        throw new Error("Permission Denied: Gemini 3.0 Pro requires you to click 'Connect Google Account' in settings.");
+    if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
+        throw new Error("PERMISSION_DENIED_PRO_MODEL");
     }
     throw new Error(error.message || "Failed to generate image.");
   }
@@ -380,15 +405,15 @@ export const consultCulturalAgent = async (
   level: ConsultantLevel,
   audience: string[],
   knowledgeFiles: KnowledgeFile[], 
+  apiKey: string, 
   modelId: string,
-  chatImagesBase64: string[] | undefined,
-  enableSearch: boolean,
-  systemPrompt: string | undefined,
-  onStreamUpdate: ((partialText: string) => void) | undefined,
-  apiKey: string
+  chatImagesBase64?: string[],
+  enableSearch: boolean = false,
+  systemPrompt?: string,
+  onStreamUpdate?: (partialText: string) => void
 ): Promise<{ text: string, moodCards?: MoodCardData[], citedSources?: string[], groundingMetadata?: any }> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
-  if (!effectiveKey) return { text: "API Key Missing. Please enter your API key in settings or connect your account." };
+  if (!effectiveKey) return { text: "API Key Missing. Please configure it in settings." };
 
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
   
@@ -398,11 +423,13 @@ export const consultCulturalAgent = async (
     ? "FAST MODE: Be simple and quick. Give practical colors (Hex codes) and clear icons immediately." 
     : "DEEP MODE: Explain the history and meaning, but keep it concise.";
 
-  const files = knowledgeFiles.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
-  const links = knowledgeFiles.filter(f => f.sourceType === 'LINK');
+  // FILTER BY isActive
+  const activeKnowledge = knowledgeFiles.filter(f => f.isActive);
+  const files = activeKnowledge.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
+  const links = activeKnowledge.filter(f => f.sourceType === 'LINK');
 
   let ragInstructions = "";
-  if (knowledgeFiles.length > 0) {
+  if (activeKnowledge.length > 0) {
       ragInstructions = `
       PRIORITY SOURCES:
       1. Attached Files: ${files.map(f => f.name).join(", ")}.
@@ -476,8 +503,8 @@ export const consultCulturalAgent = async (
         });
     } catch (err: any) {
         console.error("Consultant: Streaming failed", err);
-        if (err.message?.includes("PERMISSION_DENIED")) {
-             return { text: "Error: Permission Denied. To use this model, please go to Settings and click 'Connect Google Account'." };
+        if (err.message?.includes("403") || err.toString().includes("403") || err.message?.includes("PERMISSION_DENIED")) {
+            throw new Error("PERMISSION_DENIED_PRO_MODEL");
         }
         throw err;
     }
@@ -498,8 +525,11 @@ export const consultCulturalAgent = async (
                 groundingMetadata = chunk.candidates[0].groundingMetadata;
             }
         }
-    } catch (streamErr) {
+    } catch (streamErr: any) {
         console.error("Error during streaming", streamErr);
+        if (streamErr.message?.includes("403") || streamErr.toString().includes("403") || streamErr.message?.includes("PERMISSION_DENIED")) {
+            throw new Error("PERMISSION_DENIED_PRO_MODEL");
+        }
         throw streamErr;
     }
 

@@ -1,16 +1,17 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { AppMode, AppSettings, AVAILABLE_MODELS, DEFAULT_SETTINGS, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from './types';
 import AuditView from './components/AuditView';
 import ConsultantView from './components/ConsultantView';
 import { uploadKnowledgeFile, testApiConnection } from './services/geminiService';
-import { LayoutTemplate, MessageSquareText, Settings as SettingsIcon, X, Key, Cpu, Image as ImageIcon, Save, Activity, Check, Loader2, FileCode, RotateCcw, Link as LinkIcon } from 'lucide-react';
+import { LayoutTemplate, MessageSquareText, Settings as SettingsIcon, X, Key, Cpu, Image as ImageIcon, Save, Activity, Check, Loader2, FileCode, RotateCcw } from 'lucide-react';
 
 function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.AUDIT);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [hasKey, setHasKey] = useState(false);
+  const [showSetupScreen, setShowSetupScreen] = useState(true);
 
   // Global Knowledge Base State
   const [knowledgeFiles, setKnowledgeFiles] = useState<KnowledgeFile[]>([]);
@@ -18,28 +19,17 @@ function App() {
 
   // Load Settings & Knowledge Base on Mount
   useEffect(() => {
-    const initAuth = async () => {
-        const savedSettings = localStorage.getItem('cultural_agent_settings');
-        if (savedSettings) {
-          try {
-            const parsed = JSON.parse(savedSettings);
-            const mergedSettings = { ...DEFAULT_SETTINGS, ...parsed };
-            setSettings(mergedSettings);
-            if (mergedSettings.apiKey) {
-                setHasKey(true);
-            }
-          } catch (e) { console.error("Failed to load settings"); }
+    const savedSettings = localStorage.getItem('cultural_agent_settings');
+    if (savedSettings) {
+      try {
+        const parsed = JSON.parse(savedSettings);
+        // Merge with defaults to ensure new fields like prompts are present
+        setSettings({ ...DEFAULT_SETTINGS, ...parsed });
+        if (parsed.apiKey) {
+            setShowSetupScreen(false);
         }
-
-        // Check environment key logic
-        if (window.aistudio && window.aistudio.hasSelectedApiKey) {
-            const hasEnvKey = await window.aistudio.hasSelectedApiKey();
-            if (hasEnvKey) {
-                setHasKey(true);
-            }
-        }
-    };
-    initAuth();
+      } catch (e) { console.error("Failed to load settings"); }
+    }
 
     const savedFiles = localStorage.getItem('cultural_agent_knowledge');
     if (savedFiles) {
@@ -57,26 +47,16 @@ function App() {
   const saveSettings = (newSettings: AppSettings) => {
       setSettings(newSettings);
       localStorage.setItem('cultural_agent_settings', JSON.stringify(newSettings));
-      if (newSettings.apiKey) setHasKey(true);
   };
 
-  const handleStart = (key: string) => {
-      if (!key.trim()) return;
-      const newSettings = { ...settings, apiKey: key.trim() };
-      saveSettings(newSettings);
-  };
-
-  const handleConnectGoogle = async () => {
-      if (window.aistudio && window.aistudio.openSelectKey) {
-          await window.aistudio.openSelectKey();
-          // Assume success if we return
-          setHasKey(true);
-          // Clear manual key so UI reflects that we are using the account key
-          const newSettings = { ...settings, apiKey: '' };
-          saveSettings(newSettings);
-      } else {
-          alert("This feature is only available in the AI Studio environment.");
+  const handleSetupComplete = (newSettings: AppSettings) => {
+      // Allow setup if user is using connected account even without manual key
+      if (!newSettings.apiKey.trim() && !window.aistudio) {
+          alert("Please enter a valid API Key.");
+          return;
       }
+      saveSettings(newSettings);
+      setShowSetupScreen(false);
   };
 
   // Shared Knowledge Base Handlers
@@ -89,7 +69,8 @@ function App() {
           name: file.name,
           mimeType: file.type, // Initial value, will be updated by service response
           sourceType: 'FILE',
-          status: 'UPLOADING'
+          status: 'UPLOADING',
+          isActive: true // Default to active
       };
       
       setKnowledgeFiles(prev => [...prev, newFile]);
@@ -101,7 +82,7 @@ function App() {
           setKnowledgeFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: 'READY', uri, mimeType } : f));
       } catch (error) {
           setKnowledgeFiles(prev => prev.map(f => f.id === newFile.id ? { ...f, status: 'ERROR' } : f));
-          alert("Failed to upload knowledge file. Please check permissions and API key.");
+          alert("Failed to upload knowledge file. Please check API key.");
       } finally {
           setIsUploadingFile(false);
       }
@@ -112,13 +93,22 @@ function App() {
           id: Date.now().toString(),
           name: url,
           sourceType: 'LINK',
-          status: 'READY'
+          status: 'READY',
+          isActive: true
       };
       setKnowledgeFiles(prev => [...prev, newLink]);
   };
 
   const handleGlobalRemoveFile = (id: string) => {
       setKnowledgeFiles(prev => prev.filter(f => f.id !== id));
+  };
+  
+  const handleToggleFileActive = (id: string) => {
+      setKnowledgeFiles(prev => prev.map(f => f.id === id ? { ...f, isActive: !f.isActive } : f));
+  };
+
+  const handleToggleAllFiles = (active: boolean) => {
+      setKnowledgeFiles(prev => prev.map(f => ({ ...f, isActive: active })));
   };
 
   const SettingsModal = () => {
@@ -131,6 +121,19 @@ function App() {
         const success = await testApiConnection(localSettings.apiKey);
         setConnectionStatus(success ? 'success' : 'error');
         setTimeout(() => setConnectionStatus('idle'), 4000);
+    };
+
+    const handleConnectGoogle = async () => {
+        if (window.aistudio?.openSelectKey) {
+            try {
+                await window.aistudio.openSelectKey();
+                // Clear manual key to prefer the connected one
+                setLocalSettings(prev => ({ ...prev, apiKey: '' }));
+                alert("Connected! The app will now use your Google Account API Key.");
+            } catch (e) {
+                console.error("Connect failed", e);
+            }
+        }
     };
 
     return (
@@ -151,7 +154,7 @@ function App() {
                         onClick={() => setActiveTab('GENERAL')} 
                         className={`flex-1 py-3 text-xs font-bold uppercase tracking-wide transition-colors ${activeTab === 'GENERAL' ? 'bg-white text-excali-purple border-b-2 border-excali-purple' : 'bg-gray-50 text-gray-500 hover:text-gray-700'}`}
                     >
-                        Models & API
+                        General & API
                     </button>
                     <button 
                          onClick={() => setActiveTab('PROMPTS')} 
@@ -165,51 +168,49 @@ function App() {
                     
                     {activeTab === 'GENERAL' ? (
                         <>
-                             {/* Auth Status */}
+                            {/* API Key */}
                             <div>
                                 <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5 flex items-center gap-1">
-                                    <Key size={12}/> Gemini API Key
+                                    <Key size={12}/> Google Gemini API Key
                                 </label>
                                 
-                                <div className="space-y-3">
-                                    {/* Option A: Manual */}
-                                    <div className="flex gap-2">
-                                        <input 
-                                            type="password"
-                                            className="flex-1 p-2 border border-gray-200 rounded-lg bg-gray-50 focus:outline-none focus:border-excali-purple font-mono text-sm"
-                                            placeholder="Paste AIza... key here"
-                                            value={localSettings.apiKey}
-                                            onChange={(e) => setLocalSettings({...localSettings, apiKey: e.target.value})}
-                                        />
-                                        <button 
-                                            onClick={runConnectionTest}
-                                            disabled={connectionStatus === 'testing' || !localSettings.apiKey}
-                                            className={`px-3 py-2 rounded-lg border flex items-center gap-2 justify-center transition-all ${connectionStatus === 'success' ? 'bg-green-50 border-green-200 text-green-600' : connectionStatus === 'error' ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
-                                            title="Test Manual Key"
-                                        >
-                                            {connectionStatus === 'testing' ? <Loader2 size={16} className="animate-spin" /> : 
-                                            connectionStatus === 'success' ? <Check size={16} /> : 
-                                            connectionStatus === 'error' ? <X size={16} /> : 
-                                            <Activity size={16} />}
-                                        </button>
-                                    </div>
-                                    
-                                    <div className="flex items-center gap-3">
-                                        <div className="h-px bg-gray-200 flex-1"></div>
-                                        <span className="text-xs text-gray-400 font-bold">OR</span>
-                                        <div className="h-px bg-gray-200 flex-1"></div>
-                                    </div>
-
-                                    {/* Option B: Account Connect */}
+                                {window.aistudio && (
                                     <button 
                                         onClick={handleConnectGoogle}
-                                        className="w-full flex items-center justify-center gap-2 py-2.5 bg-white border border-gray-200 hover:bg-gray-50 rounded-lg text-gray-700 text-sm font-medium transition-colors"
+                                        className="w-full mb-3 flex items-center justify-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2.5 rounded-full transition-all shadow-sm hover:shadow-md"
                                     >
-                                        <LinkIcon size={16} />
-                                        Connect Google Account (Recommended for Pro Models)
+                                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="h-5 w-5" />
+                                        Continue with Google
+                                    </button>
+                                )}
+
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="password" 
+                                        className="flex-1 p-3 border border-gray-200 rounded-lg bg-gray-50 font-mono text-sm focus:outline-none focus:border-excali-purple focus:ring-2 focus:ring-excali-purple/20 transition-all"
+                                        placeholder="Or enter manual API Key"
+                                        value={localSettings.apiKey}
+                                        onChange={e => setLocalSettings({...localSettings, apiKey: e.target.value})}
+                                    />
+                                    <button 
+                                        onClick={runConnectionTest}
+                                        disabled={connectionStatus === 'testing' || !localSettings.apiKey}
+                                        className={`px-3 rounded-lg border flex items-center justify-center transition-all w-12 ${connectionStatus === 'success' ? 'bg-green-50 border-green-200 text-green-600' : connectionStatus === 'error' ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+                                        title="Test Connection"
+                                    >
+                                        {connectionStatus === 'testing' ? <Loader2 size={18} className="animate-spin" /> : 
+                                        connectionStatus === 'success' ? <Check size={18} /> : 
+                                        connectionStatus === 'error' ? <X size={18} /> : 
+                                        <Activity size={18} />}
                                     </button>
                                 </div>
-                                <p className="text-[10px] text-gray-400 mt-2">Required for Gemini 3.0 Pro Image models.</p>
+                                <div className="flex justify-between items-center mt-1">
+                                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-[10px] text-excali-purple underline hover:text-excali-purpleLight">
+                                        Get your API key here
+                                    </a>
+                                    {connectionStatus === 'success' && <span className="text-[10px] text-green-600 font-bold">Connection Verified</span>}
+                                    {connectionStatus === 'error' && <span className="text-[10px] text-red-500 font-bold">Connection Failed</span>}
+                                </div>
                             </div>
 
                             {/* General Model */}
@@ -323,10 +324,8 @@ function App() {
     );
   };
 
-  const WelcomeScreen = () => {
-    const [inputKey, setInputKey] = useState('');
-    
-    return (
+  if (showSetupScreen) {
+      return (
         <div className="h-screen w-screen flex flex-col items-center justify-center bg-dots p-6">
              <div className="bg-white p-8 rounded-2xl shadow-sketch border border-gray-200 max-w-md w-full animate-in zoom-in-95 duration-300">
                 <div className="w-16 h-16 bg-excali-purpleLight text-excali-purple rounded-full flex items-center justify-center mx-auto mb-6">
@@ -334,57 +333,14 @@ function App() {
                 </div>
                 <h1 className="font-hand text-3xl font-bold text-gray-800 mb-3 text-center">Welcome</h1>
                 <p className="font-sans text-gray-500 mb-6 leading-relaxed text-center text-sm">
-                  To use the advanced cultural intelligence models, please authorize access.
+                  Please configure your API key to access the cultural intelligence models.
                 </p>
                 
-                <div className="space-y-4">
-                     {/* Manual */}
-                    <div>
-                        <input 
-                            type="password" 
-                            placeholder="Option 1: Paste Manual API Key"
-                            className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 focus:outline-none focus:border-excali-purple focus:ring-2 focus:ring-excali-purple/20 transition-all font-mono text-sm"
-                            value={inputKey}
-                            onChange={(e) => setInputKey(e.target.value)}
-                        />
-                    </div>
-                    
-                    <button 
-                        onClick={() => handleStart(inputKey)}
-                        disabled={!inputKey.trim()}
-                        className="w-full bg-excali-purple text-white font-hand font-bold text-lg py-3 rounded-xl shadow-sketch hover:shadow-sketch-hover hover:-translate-y-1 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
-                    >
-                        Use Manual Key
-                    </button>
-
-                    <div className="flex items-center gap-3">
-                        <div className="h-px bg-gray-200 flex-1"></div>
-                        <span className="text-xs text-gray-400 font-bold">OR</span>
-                        <div className="h-px bg-gray-200 flex-1"></div>
-                    </div>
-
-                    {/* Google Connect */}
-                    <button 
-                        onClick={handleConnectGoogle}
-                        className="w-full bg-white text-gray-700 border border-gray-200 font-hand font-bold text-lg py-3 rounded-xl hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
-                    >
-                         <LinkIcon size={18} /> Connect Google Account
-                    </button>
-                    <p className="text-[10px] text-gray-400 text-center">Recommended for access to Gemini 3.0 Pro Image.</p>
-                </div>
-                
-                <div className="mt-4 text-center">
-                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-gray-400 underline hover:text-excali-purple">
-                        Get an API Key
-                    </a>
-                </div>
+                {/* Inline Setup Form with potential connect button */}
+                <SetupForm initialSettings={settings} onSave={handleSetupComplete} />
              </div>
         </div>
-    );
-  };
-
-  if (!hasKey) {
-      return <WelcomeScreen />;
+      );
   }
 
   return (
@@ -425,7 +381,7 @@ function App() {
              >
                  <SettingsIcon size={20} />
              </button>
-             <div className="text-[10px] font-sans text-gray-300 text-center mt-2">v3.9</div>
+             <div className="text-[10px] font-sans text-gray-300 text-center mt-2">v3.8</div>
         </div>
       </aside>
 
@@ -438,6 +394,8 @@ function App() {
                 onUploadKnowledge={handleGlobalUpload}
                 onAddLink={handleGlobalAddLink}
                 onRemoveKnowledge={handleGlobalRemoveFile}
+                onToggleKnowledgeActive={handleToggleFileActive}
+                onToggleAllKnowledge={handleToggleAllFiles}
                 isUploadingKnowledge={isUploadingFile}
             />
           </div>
@@ -448,12 +406,104 @@ function App() {
                 onUploadKnowledge={handleGlobalUpload}
                 onAddLink={handleGlobalAddLink}
                 onRemoveKnowledge={handleGlobalRemoveFile}
+                onToggleKnowledgeActive={handleToggleFileActive}
+                onToggleAllKnowledge={handleToggleAllFiles}
                 isUploadingKnowledge={isUploadingFile}
             />
           </div>
       </main>
     </div>
   );
+}
+
+// Inline Setup Form Component
+const SetupForm = ({ initialSettings, onSave }: { initialSettings: AppSettings, onSave: (s: AppSettings) => void }) => {
+    const [localSettings, setLocalSettings] = useState<AppSettings>(initialSettings);
+    const [connectionStatus, setConnectionStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+
+    const runConnectionTest = async () => {
+        setConnectionStatus('testing');
+        const success = await testApiConnection(localSettings.apiKey);
+        setConnectionStatus(success ? 'success' : 'error');
+        setTimeout(() => setConnectionStatus('idle'), 4000);
+    };
+
+    const handleConnectGoogle = async () => {
+        if (window.aistudio?.openSelectKey) {
+            try {
+                await window.aistudio.openSelectKey();
+                // Clear manual key so we don't accidentally rely on it
+                setLocalSettings(prev => ({ ...prev, apiKey: '' }));
+                alert("Connected! Press 'Start Using Agent' to continue.");
+            } catch (e) {
+                console.error("Connect failed", e);
+            }
+        }
+    };
+    
+    return (
+        <div className="space-y-4">
+            <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">API Key</label>
+                
+                {window.aistudio && (
+                    <button 
+                        onClick={handleConnectGoogle}
+                        className="w-full mb-3 flex items-center justify-center gap-2 bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 font-bold py-2.5 rounded-full transition-all shadow-sm hover:shadow-md"
+                    >
+                        <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="h-5 w-5" />
+                        Continue with Google
+                    </button>
+                )}
+
+                <div className="flex gap-2">
+                    <input 
+                        type="password" 
+                        className="flex-1 p-3 border border-gray-200 rounded-lg bg-gray-50 font-mono text-sm focus:outline-none focus:border-excali-purple"
+                        placeholder="Or enter manual API Key"
+                        value={localSettings.apiKey}
+                        onChange={e => setLocalSettings({...localSettings, apiKey: e.target.value})}
+                    />
+                    <button 
+                        onClick={runConnectionTest}
+                        disabled={connectionStatus === 'testing' || !localSettings.apiKey}
+                        className={`px-3 rounded-lg border flex items-center justify-center transition-all w-12 ${connectionStatus === 'success' ? 'bg-green-50 border-green-200 text-green-600' : connectionStatus === 'error' ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'}`}
+                        title="Test Connection"
+                    >
+                        {connectionStatus === 'testing' ? <Loader2 size={18} className="animate-spin" /> : 
+                            connectionStatus === 'success' ? <Check size={18} /> : 
+                            connectionStatus === 'error' ? <X size={18} /> : 
+                            <Activity size={18} />}
+                    </button>
+                </div>
+            </div>
+             <div>
+                <label className="block text-xs font-bold uppercase text-gray-400 mb-1.5">Model Preference</label>
+                <select 
+                    className="w-full p-3 border border-gray-200 rounded-lg bg-white text-sm"
+                    value={localSettings.generalModel}
+                    onChange={e => setLocalSettings({...localSettings, generalModel: e.target.value})}
+                >
+                    {AVAILABLE_MODELS.general.map(m => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                </select>
+            </div>
+            <button 
+                onClick={() => onSave(localSettings)}
+                className="w-full bg-excali-purple text-white font-hand font-bold text-xl py-3 rounded-xl shadow-sketch hover:shadow-sketch-hover hover:-translate-y-1 transition-all mt-4"
+            >
+                Start Using Agent
+            </button>
+             <div className="text-center flex justify-center items-center gap-4">
+                <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-xs text-gray-400 underline hover:text-excali-purple">
+                    Get an API key
+                </a>
+                {connectionStatus === 'success' && <span className="text-xs text-green-600 font-bold">Connection Verified</span>}
+                {connectionStatus === 'error' && <span className="text-xs text-red-500 font-bold">Connection Failed</span>}
+            </div>
+        </div>
+    )
 }
 
 // Custom Logo Component - Celtic Knot / Rosette Style

@@ -1,10 +1,9 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { AuditResult, Sentiment, AuditSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { performCulturalAudit, generateAlternativeImage, processImageForGemini } from '../services/geminiService';
 import ImageAnnotator from './ImageAnnotator';
 import KnowledgeDrawer from './KnowledgeDrawer';
-import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight } from 'lucide-react';
+import { Upload, Loader2, AlertTriangle, CheckCircle, Sparkles, Eraser, Globe, ChevronDown, ArrowRight, Square, CheckSquare, Clock, X, Trash2, Library, PanelRight, Key, BookOpen } from 'lucide-react';
 
 interface AuditViewProps {
   settings: AppSettings;
@@ -12,6 +11,8 @@ interface AuditViewProps {
   onUploadKnowledge: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddLink: (url: string) => void;
   onRemoveKnowledge: (id: string) => void;
+  onToggleKnowledgeActive?: (id: string) => void;
+  onToggleAllKnowledge?: (active: boolean) => void;
   isUploadingKnowledge: boolean;
 }
 
@@ -21,6 +22,8 @@ const AuditView: React.FC<AuditViewProps> = ({
     onUploadKnowledge,
     onAddLink,
     onRemoveKnowledge, 
+    onToggleKnowledgeActive,
+    onToggleAllKnowledge,
     isUploadingKnowledge 
 }) => {
   // Removed unused imageFile state
@@ -28,6 +31,8 @@ const AuditView: React.FC<AuditViewProps> = ({
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [result, setResult] = useState<AuditResult | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<string | null>(null);
+  const [useKnowledgeBase, setUseKnowledgeBase] = useState(true); // Master Toggle
   
   // Multi-select Region State
   const [selectedRegions, setSelectedRegions] = useState<string[]>(["US"]);
@@ -48,6 +53,8 @@ const AuditView: React.FC<AuditViewProps> = ({
   // History State
   const [showHistory, setShowHistory] = useState(false);
   const [auditHistory, setAuditHistory] = useState<AuditSession[]>([]);
+
+  const activeKnowledgeCount = knowledgeFiles.filter(f => f.isActive).length;
 
   // Load History on Mount
   useEffect(() => {
@@ -70,6 +77,21 @@ const AuditView: React.FC<AuditViewProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const handleConnectGoogle = async () => {
+      if (window.aistudio?.openSelectKey) {
+          try {
+              await window.aistudio.openSelectKey();
+              // After selection, retry the audit immediately if possible or just clear error
+              setErrorState(null);
+              alert("Connected! Please try running the audit again.");
+          } catch (e) {
+              console.error("Failed to open key selector", e);
+          }
+      } else {
+          alert("Key selection is not supported in this environment. Please enter a valid key in Settings.");
+      }
+  };
+
   const processUploadedFile = async (file: File) => {
     try {
         // Optimize Image (Resize + Compress)
@@ -77,6 +99,7 @@ const AuditView: React.FC<AuditViewProps> = ({
         // Store optimized version
         setImageBase64(`data:${mimeType};base64,${base64}`);
         setResult(null);
+        setErrorState(null);
         setGeneratedAlternatives({});
     } catch (err) {
         alert("Failed to process image. It might be corrupted or too large.");
@@ -122,6 +145,7 @@ const AuditView: React.FC<AuditViewProps> = ({
       setResult(session.result);
       setSelectedRegions(session.regions);
       setShowHistory(false);
+      setErrorState(null);
       // Reset generative state for new session view
       setGeneratedAlternatives({});
       setSelectedId(null);
@@ -142,6 +166,7 @@ const AuditView: React.FC<AuditViewProps> = ({
   const handleReset = () => {
     setImageBase64(null);
     setResult(null);
+    setErrorState(null);
     setGeneratedAlternatives({});
     setSelectedId(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -150,6 +175,7 @@ const AuditView: React.FC<AuditViewProps> = ({
   const runAudit = async () => {
     if (!imageBase64) return;
     setIsAnalyzing(true);
+    setErrorState(null);
     // Auto-open results panel on mobile when starting
     setShowMobileResults(true); 
     try {
@@ -158,26 +184,29 @@ const AuditView: React.FC<AuditViewProps> = ({
          const group = AUDIENCE_GROUPS.find(g => g.label === label);
          return group ? group.value : [label];
       });
+      
+      // Filter knowledge based on Master Toggle
+      const effectiveFiles = useKnowledgeBase ? knowledgeFiles : [];
 
       // Pass Knowledge Files to Service
       const data = await performCulturalAudit(
           cleanBase64, 
           contextRegions, 
-          knowledgeFiles, // Use global files
+          effectiveFiles, // Use global files
+          settings.apiKey, 
           settings.generalModel,
-          settings.apiKey, // PASS API KEY
           settings.auditSystemPrompt // Pass custom prompt
       );
       
       setResult(data);
-      // Previously auto-selected first item here. Removed to default to List View.
-      // if (data.annotations && data.annotations.length > 0) { setSelectedId(data.annotations[0].id); }
-      
-      // Save success to history
       saveToHistory(data, imageBase64, selectedRegions);
 
     } catch (e: any) {
-      alert(`Analysis Failed: ${e.message || "Unknown error"}. Try a different image.`);
+      if (e.message === "PERMISSION_DENIED_PRO_MODEL") {
+          setErrorState("PERMISSION_DENIED");
+      } else {
+          alert(`Analysis Failed: ${e.message || "Unknown error"}.`);
+      }
     } finally {
       setIsAnalyzing(false);
     }
@@ -186,10 +215,14 @@ const AuditView: React.FC<AuditViewProps> = ({
   const handleGenerateFix = async (annotationId: string, prompt: string) => {
     setGeneratingId(annotationId);
     try {
-      const newImageUrl = await generateAlternativeImage(prompt, settings.imageModel, settings.apiKey);
+      const newImageUrl = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
       setGeneratedAlternatives(prev => ({ ...prev, [annotationId]: newImageUrl }));
-    } catch (e) {
-      alert("Failed to generate alternative.");
+    } catch (e: any) {
+      if (e.message === "PERMISSION_DENIED_PRO_MODEL") {
+          alert("Permission Denied: The 'Pro' image model requires a connected Google Account. Please check settings.");
+      } else {
+          alert("Failed to generate alternative.");
+      }
     } finally {
       setGeneratingId(null);
     }
@@ -211,7 +244,7 @@ const AuditView: React.FC<AuditViewProps> = ({
       
       {/* HISTORY DRAWER */}
       {showHistory && (
-          <div className="absolute inset-0 z-50 flex">
+          <div className="absolute inset-0 z-[60] flex">
              <div className="absolute inset-0 bg-black/20 backdrop-blur-sm" onClick={() => setShowHistory(false)}></div>
              <div className="relative w-80 bg-white shadow-2xl h-full flex flex-col animate-in slide-in-from-left duration-200">
                 <div className="p-5 border-b border-gray-100 flex items-center justify-between">
@@ -273,6 +306,8 @@ const AuditView: React.FC<AuditViewProps> = ({
         onUpload={onUploadKnowledge}
         onAddLink={onAddLink}
         onRemove={onRemoveKnowledge}
+        onToggleActive={onToggleKnowledgeActive}
+        onToggleAll={onToggleAllKnowledge}
         isUploading={isUploadingKnowledge}
       />
 
@@ -342,17 +377,27 @@ const AuditView: React.FC<AuditViewProps> = ({
                     )}
                  </div>
 
-                 {/* Knowledge Base Toggle */}
+                 {/* Use Knowledge Toggle */}
+                 <button 
+                    onClick={() => setUseKnowledgeBase(!useKnowledgeBase)}
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all ml-2 flex-shrink-0 border ${useKnowledgeBase ? 'bg-excali-purpleLight/30 text-excali-purple border-excali-purpleLight' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-gray-100'}`}
+                    title={useKnowledgeBase ? "Using Selected Knowledge Base Files" : "Ignoring Knowledge Base"}
+                    disabled={activeKnowledgeCount === 0}
+                 >
+                    <BookOpen size={16} />
+                    <span className="hidden xl:inline">{useKnowledgeBase ? 'Use Knowledge' : 'Ignore Knowledge'}</span>
+                 </button>
+
+                 {/* Open Drawer Toggle */}
                  <button 
                     onClick={() => setShowKnowledge(!showKnowledge)}
-                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all ml-0 md:ml-2 flex-shrink-0 ${showKnowledge ? 'bg-excali-purple text-white shadow-md' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'}`}
-                    title="Knowledge Base"
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-bold transition-all ml-0 md:ml-1 flex-shrink-0 ${showKnowledge ? 'bg-gray-200 text-gray-800' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border border-gray-200'}`}
+                    title="Open Knowledge Base"
                 >
                     <Library size={16} />
-                    <span className="hidden lg:inline">Knowledge Base</span>
-                    {knowledgeFiles.length > 0 && (
-                        <span className={`ml-1 px-1.5 rounded-full text-[10px] ${showKnowledge ? 'bg-white text-excali-purple' : 'bg-gray-400 text-white'}`}>
-                            {knowledgeFiles.length}
+                    {activeKnowledgeCount > 0 && (
+                        <span className="bg-gray-400 text-white px-1.5 rounded-full text-[10px]">
+                            {activeKnowledgeCount}
                         </span>
                     )}
                  </button>
@@ -456,8 +501,9 @@ const AuditView: React.FC<AuditViewProps> = ({
 
       {/* SECTION 3: Results Area (Right Sidebar) */}
       {/* Visible on LG screens OR when toggled on mobile */}
+      {/* Updated Z-index to 30 to stay above annotations (which are 10/20) */}
       <div className={`
-            w-[400px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col h-full z-20 shadow-[-2px_0_10px_rgba(0,0,0,0.02)]
+            w-[400px] flex-shrink-0 bg-white border-l border-gray-200 flex flex-col h-full z-30 shadow-[-2px_0_10px_rgba(0,0,0,0.02)]
             ${showMobileResults ? 'absolute inset-y-0 right-0 animate-in slide-in-from-right duration-300' : 'hidden lg:flex'}
       `}>
         <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-white">
@@ -477,7 +523,34 @@ const AuditView: React.FC<AuditViewProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            {!result && !isAnalyzing && (
+            
+            {/* Error State for Permission Denied */}
+            {errorState === "PERMISSION_DENIED" && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center animate-in zoom-in-95">
+                    <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 text-red-500">
+                        <Key size={24} />
+                    </div>
+                    <h3 className="font-hand font-bold text-xl text-red-600 mb-2">Access Denied</h3>
+                    <p className="text-sm text-gray-600 mb-4">
+                        The selected model (Gemini 3.0 Pro) requires a secure connection.
+                    </p>
+                    {window.aistudio ? (
+                        <button 
+                            onClick={handleConnectGoogle}
+                            className="bg-white text-gray-700 border border-gray-300 px-4 py-2 rounded-full font-bold text-sm hover:bg-gray-50 transition-colors w-full flex items-center justify-center gap-2 shadow-sm"
+                        >
+                            <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="h-5 w-5" />
+                            Continue with Google
+                        </button>
+                    ) : (
+                        <div className="text-xs text-red-500 bg-red-100 p-2 rounded">
+                            Please check your API Key in Settings or switch to "Gemini 2.5 Flash".
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {!result && !isAnalyzing && !errorState && (
                 <div className="flex flex-col items-center justify-center h-3/4 text-center opacity-40">
                    <div className="w-16 h-16 bg-gray-50 rounded-full mb-4 flex items-center justify-center border border-gray-100">
                         <ArrowRight className="text-gray-400" size={24}/>

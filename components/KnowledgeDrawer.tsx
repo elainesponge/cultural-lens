@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { KnowledgeFile } from '../types';
-import { Library, X, FileText, Trash2, Loader2, Upload, Youtube, Globe, Plus } from 'lucide-react';
+import { Library, X, FileText, Trash2, Loader2, Upload, Youtube, Globe, Plus, CheckSquare, Square } from 'lucide-react';
 
 interface KnowledgeDrawerProps {
   isOpen: boolean;
@@ -9,6 +9,8 @@ interface KnowledgeDrawerProps {
   onUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddLink: (url: string) => void;
   onRemove: (id: string) => void;
+  onToggleActive?: (id: string) => void;
+  onToggleAll?: (active: boolean) => void;
   isUploading: boolean;
   description?: string;
 }
@@ -20,6 +22,8 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
   onUpload,
   onAddLink,
   onRemove,
+  onToggleActive,
+  onToggleAll,
   isUploading,
   description
 }) => {
@@ -47,7 +51,7 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
   };
 
   return (
-    <div className="absolute top-16 right-0 bottom-0 w-80 bg-white shadow-2xl border-l border-gray-200 z-30 flex flex-col animate-in slide-in-from-right duration-200">
+    <div className="absolute top-16 right-0 bottom-0 w-80 bg-white shadow-2xl border-l border-gray-200 z-40 flex flex-col animate-in slide-in-from-right duration-200">
       <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
         <h3 className="font-hand font-bold text-lg flex items-center gap-2">
           <Library size={18} /> Knowledge Base
@@ -113,6 +117,18 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
                 : "Supports: YouTube Videos, Websites"}
           </div>
       </div>
+      
+      {/* Bulk Controls */}
+      {files.length > 0 && onToggleAll && (
+          <div className="px-4 py-2 border-b border-gray-100 flex justify-between items-center text-xs">
+              <span className="font-bold text-gray-400">Select:</span>
+              <div className="flex gap-2">
+                  <button onClick={() => onToggleAll(true)} className="text-excali-purple hover:underline">All</button>
+                  <span className="text-gray-300">|</span>
+                  <button onClick={() => onToggleAll(false)} className="text-gray-500 hover:underline">None</button>
+              </div>
+          </div>
+      )}
 
       {/* List Area */}
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -123,12 +139,23 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
         )}
 
         {files.map(file => (
-          <div key={file.id} className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg shadow-sm group hover:border-excali-purple/30 transition-colors">
-            <div className="w-8 h-8 bg-gray-50 rounded flex items-center justify-center flex-shrink-0">
+          <div key={file.id} className={`flex items-center gap-3 p-3 border rounded-lg shadow-sm transition-all ${file.isActive ? 'bg-white border-excali-purple/30' : 'bg-gray-50 border-gray-200 opacity-70'}`}>
+            
+            {/* Granular Checkbox */}
+            {onToggleActive && (
+                <button 
+                    onClick={() => onToggleActive(file.id)}
+                    className={`flex-shrink-0 transition-colors ${file.isActive ? 'text-excali-purple' : 'text-gray-300 hover:text-gray-400'}`}
+                >
+                    {file.isActive ? <CheckSquare size={18} /> : <Square size={18} />}
+                </button>
+            )}
+
+            <div className="w-8 h-8 bg-gray-100 rounded flex items-center justify-center flex-shrink-0">
               {getIconForSource(file)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-bold truncate text-gray-700">{file.name}</div>
+              <div className={`text-sm font-bold truncate ${file.isActive ? 'text-gray-700' : 'text-gray-400'}`}>{file.name}</div>
               <div className="text-[10px] flex items-center gap-1">
                 {file.sourceType === 'LINK' ? (
                     <span className="text-gray-400">External Link</span>
@@ -142,7 +169,7 @@ const KnowledgeDrawer: React.FC<KnowledgeDrawerProps> = ({
                 )}
               </div>
             </div>
-            <button onClick={() => onRemove(file.id)} className="text-gray-300 hover:text-red-500 p-1 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+            <button onClick={() => onRemove(file.id)} className="text-gray-300 hover:text-red-500 p-1 hover:bg-red-50 rounded transition-all"><Trash2 size={14} /></button>
           </div>
         ))}
       </div>
