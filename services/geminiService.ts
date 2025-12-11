@@ -1,5 +1,4 @@
 
-
 import { GoogleGenAI, Part, Content } from "@google/genai";
 import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
 
@@ -27,10 +26,12 @@ export const getMimeTypeFromExtension = (filename: string): string => {
  */
 const getEffectiveApiKey = (manualKey: string): string => {
     // 1. Check process.env (AI Studio / IDX)
-    // We use a safe check to avoid ReferenceError in browsers where process is not defined
-    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
-        return process.env.API_KEY;
-    }
+    try {
+        if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+            return process.env.API_KEY;
+        }
+    } catch (e) {}
+
     // 2. Check Vite Environment Variable
     if (import.meta && import.meta.env && import.meta.env.VITE_GEMINI_API_KEY) {
         return import.meta.env.VITE_GEMINI_API_KEY;
@@ -88,18 +89,11 @@ export const processImageForGemini = async (file: File): Promise<{ base64: strin
   });
 };
 
-/**
- * Deprecated: Use processImageForGemini instead
- */
 export const fileToGenerativePart = async (file: File): Promise<string> => {
     const result = await processImageForGemini(file);
     return result.base64;
 };
 
-/**
- * Uploads a file to Gemini Files API and waits for it to be ACTIVE.
- * Returns both URI and corrected MIME type.
- */
 export const uploadKnowledgeFile = async (
   file: File, 
   apiKey: string
@@ -114,14 +108,12 @@ export const uploadKnowledgeFile = async (
   if (ext === 'docx') {
       try {
           const arrayBuffer = await file.arrayBuffer();
-          // Use global mammoth library (injected via index.html)
-          if ((window as any).mammoth) {
-              const result = await (window as any).mammoth.extractRawText({ arrayBuffer: arrayBuffer });
+          if (window.mammoth) {
+              const result = await window.mammoth.extractRawText({ arrayBuffer: arrayBuffer });
               const extractedText = result.value;
               const warning = result.messages.map((m: any) => m.message).join('\n');
               if (warning) console.warn("Docx conversion warnings:", warning);
               
-              // Create a new Text file
               fileToUpload = new File([extractedText], file.name + ".txt", { type: "text/plain" });
           } else {
               throw new Error("Conversion library not loaded.");
@@ -131,7 +123,6 @@ export const uploadKnowledgeFile = async (
           throw new Error("Failed to read Word document. Please ensure it is a valid .docx file.");
       }
   } 
-  // Pre-check for unsupported formats (that we can't convert)
   else if (['doc', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext || '')) {
       throw new Error(`.${ext} files are not supported directly. Please convert to PDF or .docx first.`);
   }
@@ -139,7 +130,6 @@ export const uploadKnowledgeFile = async (
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
 
   try {
-    // 1. Upload
     const uploadResult = await ai.files.upload({
       file: fileToUpload,
       config: { displayName: file.name }
@@ -152,16 +142,14 @@ export const uploadKnowledgeFile = async (
     const fileUri: string = uploadResult.uri;
     const name: string = uploadResult.name; 
     
-    // Determine MIME type
     let finalMimeType = uploadResult.mimeType;
     if (!finalMimeType) {
         finalMimeType = fileToUpload.type || getMimeTypeFromExtension(file.name);
     }
 
-    // 2. Poll until ACTIVE
     let isActive = false;
     while (!isActive) {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1s
+      await new Promise(resolve => setTimeout(resolve, 1000));
       const fileStatus = await ai.files.get({ name: name });
       if (fileStatus.state === 'ACTIVE') {
         isActive = true;
@@ -176,7 +164,6 @@ export const uploadKnowledgeFile = async (
     if (error.toString().includes("Unsupported MIME type") || (error.message && error.message.includes("Unsupported MIME type"))) {
         throw new Error("This file format is not supported by the API.");
     }
-    // Check for Permission Denied (403)
     if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
         throw new Error("PERMISSION_DENIED_PRO_MODEL");
     }
@@ -184,9 +171,6 @@ export const uploadKnowledgeFile = async (
   }
 };
 
-/**
- * Test API Connection
- */
 export const testApiConnection = async (apiKey: string): Promise<boolean> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
   if (!effectiveKey) return false;
@@ -204,9 +188,6 @@ export const testApiConnection = async (apiKey: string): Promise<boolean> => {
   }
 };
 
-/**
- * Helper to check if a file is supported for generation
- */
 const isSupportedFileForGeneration = (mimeType?: string): boolean => {
     if (!mimeType) return false;
     return mimeType.startsWith('text/') || 
@@ -215,9 +196,6 @@ const isSupportedFileForGeneration = (mimeType?: string): boolean => {
            mimeType === 'application/json';
 };
 
-/**
- * Feature 1: Cultural Audit with RAG Support
- */
 export const performCulturalAudit = async (
   base64Image: string, 
   regions: string[], 
@@ -233,12 +211,10 @@ export const performCulturalAudit = async (
   
   const regionString = regions.length > 0 ? regions.join(", ") : "Global";
 
-  // Split into Files vs Links - FILTER BY isActive
   const activeKnowledge = knowledgeFiles.filter(f => f.isActive);
   const files = activeKnowledge.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
   const links = activeKnowledge.filter(f => f.sourceType === 'LINK');
 
-  // Construct Prompt with RAG Context
   let ragInstructions = "";
   if (activeKnowledge.length > 0) {
       ragInstructions = `
@@ -250,17 +226,14 @@ export const performCulturalAudit = async (
       `;
   }
 
-  // Use Custom Prompt or Default
   let promptText = systemPrompt || DEFAULT_AUDIT_PROMPT;
   
-  // Replace Placeholders
   promptText = promptText.replace('{{regions}}', regionString);
   promptText = promptText.replace('{{ragInstructions}}', ragInstructions);
 
   try {
     const parts: Part[] = [];
 
-    // 1. Add File Data (Context)
     files.forEach(file => {
         if (file.uri && file.status === 'READY') {
             const safeMimeType = file.mimeType || getMimeTypeFromExtension(file.name);
@@ -273,10 +246,7 @@ export const performCulturalAudit = async (
         }
     });
 
-    // 2. Add Image
     parts.push({ inlineData: { mimeType: 'image/jpeg', data: base64Image } });
-    
-    // 3. Add Prompt
     parts.push({ text: promptText });
 
     const apiCall = ai.models.generateContent({
@@ -341,9 +311,6 @@ export const performCulturalAudit = async (
   }
 };
 
-/**
- * Feature 1 Extension: Generate Fix (Swap & Fix)
- */
 export const generateAlternativeImage = async (
   prompt: string, 
   apiKey: string, 
@@ -375,17 +342,28 @@ export const generateAlternativeImage = async (
 
     const candidate = response.candidates?.[0];
     if (!candidate || candidate.finishReason === 'SAFETY') {
-        throw new Error("Image generation blocked.");
+        throw new Error("Image generation blocked by safety filters.");
     }
 
     const parts = candidate.content?.parts;
+    let textFallback = "";
+
     if (parts) {
       for (const part of parts) {
         if (part.inlineData && part.inlineData.data) {
           return `data:image/png;base64,${part.inlineData.data}`;
         }
+        if (part.text) {
+            textFallback += part.text;
+        }
       }
     }
+    
+    if (textFallback) {
+        const shortError = textFallback.length > 50 ? textFallback.substring(0, 50) + "..." : textFallback;
+        throw new Error(`Model refused: ${shortError}`);
+    }
+
     throw new Error("No image data found in response.");
   } catch (error: any) {
     console.error("Generation Error:", error);
@@ -396,9 +374,6 @@ export const generateAlternativeImage = async (
   }
 };
 
-/**
- * Feature 2: Cultural Consultant Chat (RAG + Web Search)
- */
 export const consultCulturalAgent = async (
   query: string, 
   history: ChatMessage[], 
@@ -423,7 +398,6 @@ export const consultCulturalAgent = async (
     ? "FAST MODE: Be simple and quick. Give practical colors (Hex codes) and clear icons immediately." 
     : "DEEP MODE: Explain the history and meaning, but keep it concise.";
 
-  // FILTER BY isActive
   const activeKnowledge = knowledgeFiles.filter(f => f.isActive);
   const files = activeKnowledge.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
   const links = activeKnowledge.filter(f => f.sourceType === 'LINK');

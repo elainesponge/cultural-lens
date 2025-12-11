@@ -12,11 +12,10 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
   const hasVisuals = data.visuals && data.visuals.length > 0;
   const hasColors = data.colors && data.colors.length > 0;
 
-  // Create a stable key for visuals to prevent dependency loop/flicker
   const visualsKey = hasVisuals ? data.visuals.join(',') : '';
 
   const handleConnectGoogle = async () => {
-        if (window.aistudio?.openSelectKey) {
+        if (window.aistudio) {
             try {
                 await window.aistudio.openSelectKey();
                 setGenError(null);
@@ -37,7 +36,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
         setSnapshotUrl(null);
         
         try {
-            // Prompt engineered to look like a real photo or reference image
             const prompt = `A detailed, photorealistic reference photograph of ${data.title}. Elements: ${data.visuals.join(", ")}. High quality, documentary style, clear focus.`;
             const url = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
             setSnapshotUrl(url);
@@ -45,8 +43,11 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
             console.error("Failed to fetch visual", e);
             let msg = "Generation failed";
             if (e.message?.includes("PERMISSION_DENIED")) msg = "PERMISSION_DENIED";
-            else if (e.message?.includes("safety")) msg = "Blocked by Safety";
+            else if (e.message?.includes("safety") || e.message?.includes("blocked")) msg = "Blocked by Safety";
             else if (e.message?.includes("429")) msg = "Rate Limit";
+            else if (e.message?.includes("Model refused")) msg = "AI Refused";
+            else if (e.message) msg = "Error"; 
+
             setGenError(msg);
         } finally {
             setIsLoadingSnapshot(false);
@@ -54,7 +55,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
   };
 
   useEffect(() => {
-    // Only auto-fetch if we haven't tried yet (no error, no url)
     if (hasVisuals && !snapshotUrl && !genError && !isLoadingSnapshot) {
         fetchVisuals();
     }
@@ -64,7 +64,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
   return (
     <div className="flex-shrink-0 w-[300px] bg-white border border-gray-200 rounded-xl shadow-sketch hover:shadow-sketch-lg hover:-translate-y-1 transition-all duration-200 group snap-start flex flex-col relative overflow-hidden">
       
-      {/* Header Color Strip (Only if colors exist) */}
       {hasColors ? (
           <div className="h-2 w-full flex">
             {data.colors.map((c, i) => (
@@ -76,7 +75,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
       )}
 
       <div className="p-5 flex flex-col h-full">
-         {/* Title & Date */}
          <div className="mb-4 border-b border-gray-100 pb-3">
             <h3 className="text-2xl font-hand font-bold text-excali-stroke leading-tight mb-1">{data.title}</h3>
             <div className="flex items-center gap-1 text-xs font-bold text-gray-400 uppercase tracking-wide">
@@ -85,7 +83,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
             </div>
          </div>
          
-         {/* Proactive Snapshot Area */}
          {hasVisuals && (
              <div className="mb-4 bg-gray-50 rounded-lg border border-gray-100 h-[180px] flex items-center justify-center overflow-hidden relative group/image">
                 {isLoadingSnapshot ? (
@@ -96,7 +93,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
                 ) : snapshotUrl ? (
                     <>
                         <img src={snapshotUrl} alt={data.title} className="w-full h-full object-cover transition-transform duration-700 group-hover/image:scale-105" />
-                        {/* Search Overlay Icon */}
                         <div className="absolute top-2 right-2 bg-black/50 p-1.5 rounded-full text-white backdrop-blur-sm opacity-0 group-hover/image:opacity-100 transition-opacity pointer-events-none">
                             <Search size={12} />
                         </div>
@@ -148,7 +144,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
              {data.description}
          </p>
 
-         {/* Visual Keywords Chips */}
          {hasVisuals && (
              <div className="mb-4">
                  <div className="flex flex-wrap gap-2">
@@ -158,7 +153,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
                             className="text-[10px] font-bold px-2 py-1 bg-gray-100 rounded-md text-gray-500"
                         >
                             {(() => {
-                                // Robust Sentence Case Conversion
                                 const str = v || "";
                                 const lower = str.toLowerCase();
                                 return lower.charAt(0).toUpperCase() + lower.slice(1);
@@ -169,7 +163,6 @@ const MoodCard: React.FC<{ data: MoodCardData; settings: AppSettings }> = ({ dat
              </div>
          )}
 
-        {/* Palette Swatches (Conditional) */}
         {hasColors && (
             <div className="mt-auto pt-2 border-t border-gray-100">
                 <div className="text-[10px] font-bold uppercase text-gray-400 mb-2 flex items-center gap-1 mt-2">

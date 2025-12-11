@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ChatMessage, ConsultantLevel, ChatSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { consultCulturalAgent, processImageForGemini } from '../services/geminiService';
@@ -16,6 +17,63 @@ interface ConsultantViewProps {
   onToggleAllKnowledge?: (active: boolean) => void;
   isUploadingKnowledge: boolean;
 }
+
+// Helper: Improved Fuzzy Matching for Sources
+const getSourceLink = (sourceName: string, knowledgeFiles: KnowledgeFile[], groundingMetadata?: any): string | null => {
+    // 1. Is it a direct URL?
+    if (sourceName.startsWith('http://') || sourceName.startsWith('https://')) {
+        return sourceName;
+    }
+
+    // 2. Is it a Knowledge Base Link or File?
+    const kbFile = knowledgeFiles.find(f => f.name === sourceName);
+    if (kbFile) {
+        if (kbFile.sourceType === 'LINK') return kbFile.name;
+        // Files don't have public URLs usually
+        if (kbFile.sourceType === 'FILE') return null;
+    }
+
+    // 3. Smart Matching in Grounding Metadata
+    if (groundingMetadata?.groundingChunks) {
+        const lowerSource = sourceName.toLowerCase();
+        const chunks = groundingMetadata.groundingChunks;
+
+        // A. Title Match (Source name is inside title or vice versa)
+        let chunk = chunks.find((c: any) => {
+             if (!c.web?.title) return false;
+             const lowerTitle = c.web.title.toLowerCase();
+             return lowerTitle.includes(lowerSource) || lowerSource.includes(lowerTitle);
+        });
+
+        // B. URI Match (Domain name check)
+        if (!chunk) {
+             chunk = chunks.find((c: any) => {
+                 if (!c.web?.uri) return false;
+                 return c.web.uri.toLowerCase().includes(lowerSource);
+             });
+        }
+
+        // C. Token Match (Matches at least one significant word)
+        if (!chunk) {
+             const sourceTokens = lowerSource.split(/[\s\-_]+/).filter(t => t.length > 3);
+             if (sourceTokens.length > 0) {
+                 chunk = chunks.find((c: any) => {
+                     if (!c.web?.title) return false;
+                     const lowerTitle = c.web.title.toLowerCase();
+                     // Strict: All tokens must match
+                     return sourceTokens.every(token => lowerTitle.includes(token));
+                 });
+             }
+        }
+        
+        if (chunk?.web?.uri) {
+            return chunk.web.uri;
+        }
+    }
+
+    // 4. Fallback: Google Search
+    return `https://www.google.com/search?q=${encodeURIComponent(sourceName)}`;
+};
 
 const ConsultantView: React.FC<ConsultantViewProps> = ({ 
     settings,
@@ -38,10 +96,10 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   // Chat State
   const [inputValue, setInputValue] = useState('');
   const [loading, setLoading] = useState(false);
-  const [useSearch, setUseSearch] = useState(false); // Default to false for speed
-  const [useKnowledgeBase, setUseKnowledgeBase] = useState(true); // Master Toggle for RAG
+  const [useSearch, setUseSearch] = useState(false);
+  const [useKnowledgeBase, setUseKnowledgeBase] = useState(true);
   
-  // Image Input State (Multiple)
+  // Image Input State
   const [chatImages, setChatImages] = useState<File[]>([]);
   const [chatImagePreviews, setChatImagePreviews] = useState<string[]>([]);
   
@@ -59,7 +117,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
 
   const activeKnowledgeCount = knowledgeFiles.filter(f => f.isActive).length;
 
-  // Load Sessions from LocalStorage
   useEffect(() => {
     const saved = localStorage.getItem('cultural_chat_sessions');
     if (saved) {
@@ -70,29 +127,23 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     }
   }, []);
 
-  // Save Sessions to LocalStorage
   useEffect(() => {
       localStorage.setItem('cultural_chat_sessions', JSON.stringify(sessions));
   }, [sessions]);
 
-  // Scroll to bottom
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [sessions, currentSessionId, loading]);
 
-  // Auto-resize Textarea
   useEffect(() => {
     if (textareaRef.current) {
-      // Reset height to allow shrinking
       textareaRef.current.style.height = 'auto';
-      // Set to scrollHeight to expand
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [inputValue]);
 
-  // Close dropdown on click outside
   useEffect(() => {
       const handleClickOutside = (event: MouseEvent) => {
           if (contextDropdownRef.current && !contextDropdownRef.current.contains(event.target as Node)) {
@@ -120,7 +171,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
           timestamp: Date.now(),
           audience: setupAudience,
           level: ConsultantLevel.FAST,
-          knowledgeFiles: [], // Deprecated in favor of global, but kept for type compat if needed
+          knowledgeFiles: [],
           messages: [{ 
               role: 'model', 
               text: `Hello! I'm your Cultural Consultant. I'm ready to help you design for **${setupAudience.join(", ")}**.\n\nAsk me about festivals, colors, or symbols, or upload documents to your Knowledge Base.` 
@@ -156,12 +207,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
       if (e.target.files && e.target.files.length > 0) {
           const newFiles = Array.from(e.target.files) as File[];
-          
-          // Append new files
           setChatImages(prev => [...prev, ...newFiles]);
-          
           try {
-             // Process preview immediately
              const newPreviews = await Promise.all(newFiles.map(async file => {
                  const { base64, mimeType } = await processImageForGemini(file);
                  return `data:${mimeType};base64,${base64}`;
@@ -185,7 +232,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   };
 
   const handleConnectGoogle = async () => {
-      if (window.aistudio?.openSelectKey) {
+      if (window.aistudio) {
           try {
               await window.aistudio.openSelectKey();
               alert("Connected! Please try sending your message again.");
@@ -198,17 +245,15 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   };
 
   const handleSend = async () => {
-    if (loading) return; // Prevent send if already loading
+    if (loading) return; 
     if ((!inputValue.trim() && chatImages.length === 0) || !currentSession) return;
 
-    // 1. Add User Message
     const userMsg: ChatMessage = { 
         role: 'user', 
         text: inputValue,
         images: chatImagePreviews.length > 0 ? [...chatImagePreviews] : undefined
     };
     
-    // Update title only for the very first user message
     const updatedTitle = currentSession.messages.length <= 1 && inputValue 
         ? (inputValue.slice(0, 30) + (inputValue.length > 30 ? "..." : "")) 
         : currentSession.title;
@@ -219,7 +264,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
         messages: [...currentSession.messages, userMsg],
     };
     
-    // 2. Add Placeholder Model Message for Streaming
     const placeholderMsg: ChatMessage = {
         role: 'model',
         text: '',
@@ -227,19 +271,14 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     };
     updatedSession.messages.push(placeholderMsg);
 
-    // Commit to state
     updateCurrentSession(updatedSession);
     
     const currentInput = inputValue;
     setInputValue('');
     setLoading(true);
     
-    // Reset textarea height
-    if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-    }
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    // Process images to base64 for API
     let imagesBase64: string[] = [];
     if (chatImages.length > 0) {
         try {
@@ -252,17 +291,12 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
     
     clearChatImages();
 
-    // 3. Call API with Streaming Callback
     try {
-        // We capture currentSessionId in a const closure to use inside the callback
         const activeSessionId = currentSessionId;
-        
-        // APPLY MASTER SWITCH: If useKnowledgeBase is false, send empty array, otherwise send full list (service filters by isActive)
         const effectiveFiles = useKnowledgeBase ? knowledgeFiles : [];
 
         const response = await consultCulturalAgent(
             currentInput || (imagesBase64.length > 0 ? "Analyze these images" : ""), 
-            // Send history excluding the placeholder we just added
             updatedSession.messages.slice(0, -1), 
             updatedSession.level,
             updatedSession.audience,
@@ -270,17 +304,15 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             settings.apiKey,
             settings.generalModel,
             imagesBase64,
-            useSearch, // Pass search toggle state
+            useSearch, 
             settings.consultantSystemPrompt,
             (partialText) => {
-                // STREAMING UPDATE
                 setSessions(prevSessions => {
                     return prevSessions.map(s => {
                         if (s.id === activeSessionId) {
                             const msgs = [...s.messages];
                             const lastMsgIdx = msgs.length - 1;
                             if (lastMsgIdx >= 0 && msgs[lastMsgIdx].role === 'model') {
-                                // Update text in real-time
                                 msgs[lastMsgIdx] = { ...msgs[lastMsgIdx], text: partialText };
                             }
                             return { ...s, messages: msgs };
@@ -291,7 +323,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             }
         );
 
-        // 4. Final Update (Cleaned Text + Mood Cards)
         setSessions(prevSessions => {
              return prevSessions.map(s => {
                  if (s.id === activeSessionId) {
@@ -300,7 +331,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                      if (lastMsgIdx >= 0 && msgs[lastMsgIdx].role === 'model') {
                          msgs[lastMsgIdx] = { 
                              ...msgs[lastMsgIdx], 
-                             text: response.text, // Cleaned text (JSON block removed)
+                             text: response.text, 
                              moodCards: response.moodCards,
                              citedSources: response.citedSources,
                              groundingMetadata: response.groundingMetadata,
@@ -315,19 +346,16 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
 
     } catch (error: any) {
         console.error("Chat Error:", error);
-        // Remove the placeholder if failed, or show error message
         setSessions(prevSessions => {
              return prevSessions.map(s => {
                  if (s.id === currentSessionId) {
                      const msgs = [...s.messages];
                      const lastMsgIdx = msgs.length - 1;
-                     // If the last message was our placeholder (still typing), update it to error
                      if (lastMsgIdx >= 0 && msgs[lastMsgIdx].isTyping) {
-                         // Check for specific permission error
                          const isPermError = error.message === "PERMISSION_DENIED_PRO_MODEL";
                          const errorMsg = isPermError 
-                            ? "ERROR_PERM_DENIED" // Special flag for renderer
-                            : "Sorry, I encountered an error while connecting to the service. Please check your API key and connection.";
+                            ? "ERROR_PERM_DENIED" 
+                            : "Sorry, I encountered an error. Please check your API key and connection.";
                          
                          msgs[lastMsgIdx] = {
                              ...msgs[lastMsgIdx],
@@ -353,7 +381,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        // Only send if NOT loading
         if (!loading) {
             handleSend();
         }
@@ -368,7 +395,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
       }
   };
 
-  // Switch Context (In-Chat)
   const toggleTempContext = (label: string) => {
       if (tempContext.includes(label)) {
           setTempContext(prev => prev.filter(l => l !== label));
@@ -380,7 +406,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   const applyContextChange = () => {
       if (!currentSession || tempContext.length === 0) return;
       
-      // Fix: Avoid mutating the arrays with .sort() in place. Create copies first.
       const hasChanged = JSON.stringify([...tempContext].sort()) !== JSON.stringify([...currentSession.audience].sort());
       
       if (hasChanged) {
@@ -401,7 +426,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
   return (
     <div className="flex h-full w-full bg-white overflow-hidden">
         
-        {/* SIDEBAR: Session List */}
         <div className="w-64 border-r border-gray-200 bg-gray-50 flex flex-col h-full flex-shrink-0 z-20 hidden md:flex">
             <div className="p-4">
                 <button 
@@ -444,10 +468,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
             </div>
         </div>
 
-        {/* MAIN CHAT AREA */}
         <div className="flex-1 flex flex-col h-full relative">
             
-            {/* Knowledge Drawer */}
             <KnowledgeDrawer 
                 isOpen={showKnowledge}
                 onClose={() => setShowKnowledge(false)}
@@ -461,7 +483,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                 description="Upload brand guidelines, color palettes, or research documents here."
             />
 
-            {/* SETUP SCREEN (If no current session) */}
             {(isSetupMode || !currentSession) ? (
                 <div className="flex-1 flex flex-col items-center justify-center p-6 bg-dots animate-in fade-in duration-300">
                     <div className="max-w-2xl w-full bg-white p-8 rounded-3xl shadow-sketch border border-gray-200 relative overflow-hidden">
@@ -508,9 +529,7 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                     </div>
                 </div>
             ) : (
-                /* ACTIVE CHAT UI */
                 <>
-                    {/* Header */}
                     <div className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-4 md:px-6 flex-shrink-0 z-10 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
                         <div className="flex items-center gap-3">
                              <button onClick={startNewChat} className="md:hidden p-2 text-gray-400 hover:bg-gray-100 rounded-full"><ChevronRight className="rotate-180" size={20} /></button>
@@ -579,7 +598,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         </div>
                     </div>
 
-                    {/* Messages */}
                     <div className="flex-1 overflow-y-auto p-4 md:p-6 bg-dots" ref={scrollRef}>
                         <div className="max-w-4xl mx-auto space-y-8">
                             {currentSession.messages.map((msg, idx) => (
@@ -591,7 +609,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
 
                                     <div className={`flex flex-col gap-2 max-w-[85%] md:max-w-[75%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
                                         
-                                        {/* Image Attachments */}
                                         {msg.images && msg.images.length > 0 && (
                                             <div className="flex flex-wrap gap-2 mb-2 justify-end">
                                                 {msg.images.map((img, i) => (
@@ -631,36 +648,56 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                                 </>
                                             )}
 
-                                            {/* Source Citations */}
-                                            {msg.citedSources && msg.citedSources.length > 0 && (
-                                                <div className="mt-4 pt-3 border-t border-gray-100/20 text-xs opacity-70 flex flex-wrap gap-2">
-                                                    <span className="font-bold">Sources:</span>
-                                                    {msg.citedSources.map((src, i) => (
-                                                        <span key={i} className="bg-black/5 px-2 py-0.5 rounded flex items-center gap-1">
-                                                            <FileText size={10} /> {src}
-                                                        </span>
-                                                    ))}
-                                                </div>
-                                            )}
-
-                                            {/* Grounding Metadata (Search Results) */}
-                                            {msg.groundingMetadata?.groundingChunks && (
-                                                <div className="mt-3 flex flex-wrap gap-2">
-                                                    {msg.groundingMetadata.groundingChunks.map((chunk: any, i: number) => {
-                                                        if (chunk.web?.uri) {
+                                            {/* Smart Sources Section */}
+                                            {(msg.groundingMetadata?.groundingChunks || (msg.citedSources && msg.citedSources.length > 0)) && (
+                                                <div className="mt-4 pt-3 border-t border-gray-100/50 flex flex-col gap-2">
+                                                    <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+                                                        <Search size={10} /> Sources & Citations
+                                                    </span>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {/* 1. Grounding Chunks (Web) */}
+                                                        {msg.groundingMetadata?.groundingChunks?.map((chunk: any, i: number) => {
+                                                            if (!chunk.web?.uri) return null;
                                                             return (
-                                                                <a key={i} href={chunk.web.uri} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded hover:bg-blue-100 transition-colors border border-blue-100">
-                                                                    <ExternalLink size={10} /> {chunk.web.title || "Web Source"}
+                                                                <a 
+                                                                    key={`web-${i}`}
+                                                                    href={chunk.web.uri}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="flex items-center gap-2 px-3 py-1.5 bg-gray-50 hover:bg-white border border-gray-200 hover:border-blue-200 hover:shadow-sm rounded-lg text-xs text-gray-600 transition-all group max-w-full"
+                                                                >
+                                                                    <div className="w-4 h-4 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center flex-shrink-0 group-hover:scale-110 transition-transform">
+                                                                        <span className="text-[8px] font-bold">{i+1}</span>
+                                                                    </div>
+                                                                    <span className="truncate max-w-[150px]">{chunk.web.title || "Web Source"}</span>
+                                                                    <ExternalLink size={10} className="opacity-0 group-hover:opacity-100 text-blue-400" />
                                                                 </a>
                                                             )
-                                                        }
-                                                        return null;
-                                                    })}
+                                                        })}
+
+                                                        {/* 2. Cited Sources (Files/Other) */}
+                                                        {msg.citedSources?.map((src, i) => {
+                                                             const link = getSourceLink(src, knowledgeFiles, msg.groundingMetadata);
+                                                             if (!link || link.includes('google.com/search')) return null; 
+
+                                                             return (
+                                                                <a 
+                                                                    key={`cite-${i}`}
+                                                                    href={link}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className="flex items-center gap-2 px-3 py-1.5 bg-purple-50 hover:bg-white border border-purple-100 hover:border-purple-200 hover:shadow-sm rounded-lg text-xs text-purple-700 transition-all"
+                                                                >
+                                                                     <FileText size={12} />
+                                                                     <span className="truncate max-w-[150px]">{src}</span>
+                                                                </a>
+                                                             );
+                                                        })}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>
 
-                                        {/* Mood Cards (Horizontal Scroll) */}
                                         {msg.moodCards && msg.moodCards.length > 0 && (
                                             <div className="w-full mt-2 overflow-x-auto pb-4 pt-2 px-1 flex gap-4 snap-x custom-scrollbar">
                                                 {msg.moodCards.map((card, i) => (
@@ -674,11 +711,8 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                         </div>
                     </div>
 
-                    {/* Input Area */}
                     <div className="p-4 bg-white border-t border-gray-200">
                         <div className="max-w-4xl mx-auto flex flex-col gap-2 relative">
-                            
-                            {/* Image Previews */}
                             {chatImagePreviews.length > 0 && (
                                 <div className="flex gap-3 pb-2 overflow-x-auto">
                                     {chatImagePreviews.map((src, i) => (
@@ -696,8 +730,6 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                             )}
 
                             <div className="flex gap-2 items-end bg-gray-50 border border-gray-200 rounded-2xl p-2 shadow-sm focus-within:ring-2 focus-within:ring-excali-purple/20 focus-within:border-excali-purple transition-all">
-                                
-                                {/* Image Upload Button */}
                                 <button 
                                     onClick={() => fileInputRef.current?.click()}
                                     className="p-2 text-gray-400 hover:text-excali-purple hover:bg-white rounded-xl transition-colors flex-shrink-0"
@@ -714,27 +746,23 @@ const ConsultantView: React.FC<ConsultantViewProps> = ({
                                     onChange={handleImageSelect}
                                 />
 
-                                {/* Knowledge Toggle Button */}
                                 <button 
                                     onClick={() => setUseKnowledgeBase(!useKnowledgeBase)}
                                     disabled={activeKnowledgeCount === 0}
                                     className={`relative group p-2 rounded-xl transition-colors flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${useKnowledgeBase ? 'bg-excali-purpleLight/30 text-excali-purple border border-excali-purpleLight' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100'}`}
                                 >
                                     <BookOpen size={20} />
-                                    {/* Hover Tooltip */}
                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                                         {useKnowledgeBase ? 'Use Knowledge Base' : 'Ignore Knowledge Base'}
                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>
                                     </div>
                                 </button>
                                 
-                                {/* Search Toggle - OPTIMIZED: Text Label */}
                                 <button 
                                     onClick={() => setUseSearch(!useSearch)}
                                     className={`relative group p-2 rounded-xl transition-colors flex-shrink-0 ${useSearch ? 'bg-blue-100 text-blue-700 border border-blue-200' : 'bg-gray-50 text-gray-500 border border-gray-200 hover:bg-gray-100'}`}
                                 >
                                     <Globe2 size={20} />
-                                    {/* Hover Tooltip */}
                                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-50">
                                         Web search
                                         <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-800"></div>

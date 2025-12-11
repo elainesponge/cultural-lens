@@ -1,3 +1,5 @@
+
+
 import React, { useState, useRef, useEffect } from 'react';
 import { AuditResult, Sentiment, AuditSession, AUDIENCE_GROUPS, AppSettings, KnowledgeFile } from '../types';
 import { performCulturalAudit, generateAlternativeImage, processImageForGemini } from '../services/geminiService';
@@ -78,7 +80,7 @@ const AuditView: React.FC<AuditViewProps> = ({
   }, []);
 
   const handleConnectGoogle = async () => {
-      if (window.aistudio?.openSelectKey) {
+      if (window.aistudio) {
           try {
               await window.aistudio.openSelectKey();
               // After selection, retry the audit immediately if possible or just clear error

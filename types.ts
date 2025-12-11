@@ -199,24 +199,23 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 // --- Type Augmentation for Environment & AI Studio ---
 declare global {
+  // Define AIStudio interface to match strict type requirements
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
+
+  // Correctly augment the Window interface to include aistudio and mammoth
+  interface Window {
+    aistudio?: AIStudio;
+    mammoth?: any;
+  }
+
   // Augment ImportMeta for Vite environment variables
   interface ImportMeta {
     env: {
       VITE_GEMINI_API_KEY?: string;
       [key: string]: any;
     };
-  }
-
-  // Augment AIStudio interface (if it exists) instead of declaring conflicting Window property
-  interface AIStudio {
-    hasSelectedApiKey: () => Promise<boolean>;
-    openSelectKey: () => Promise<void>;
-  }
-
-  // Augment ProcessEnv to ensure API_KEY is typed, without redeclaring 'process'
-  namespace NodeJS {
-    interface ProcessEnv {
-      API_KEY?: string;
-    }
   }
 }

@@ -124,7 +124,7 @@ function App() {
     };
 
     const handleConnectGoogle = async () => {
-        if (window.aistudio?.openSelectKey) {
+        if (window.aistudio) {
             try {
                 await window.aistudio.openSelectKey();
                 // Clear manual key to prefer the connected one
@@ -429,7 +429,7 @@ const SetupForm = ({ initialSettings, onSave }: { initialSettings: AppSettings, 
     };
 
     const handleConnectGoogle = async () => {
-        if (window.aistudio?.openSelectKey) {
+        if (window.aistudio) {
             try {
                 await window.aistudio.openSelectKey();
                 // Clear manual key so we don't accidentally rely on it
