@@ -1,5 +1,4 @@
 
-
 export enum AppMode {
   AUDIT = 'AUDIT',
   CONSULTANT = 'CONSULTANT'
@@ -110,8 +109,9 @@ export interface AppSettings {
 
 export const AVAILABLE_MODELS = {
   general: [
-    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fast)' },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Smart)' }
+    { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fastest)' },
+    { id: 'gemini-3-flash-preview', name: 'Gemini 3.0 Flash (Balanced)' },
+    { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Intelligence)' }
   ],
   image: [
     { id: 'gemini-2.5-flash-image', name: 'Gemini 2.5 Flash Image (Fast)' },
