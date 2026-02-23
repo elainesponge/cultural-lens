@@ -220,10 +220,17 @@ const AuditView: React.FC<AuditViewProps> = ({
       const newImageUrl = await generateAlternativeImage(prompt, settings.apiKey, settings.imageModel);
       setGeneratedAlternatives(prev => ({ ...prev, [annotationId]: newImageUrl }));
     } catch (e: any) {
-      if (e.message === "PERMISSION_DENIED_PRO_MODEL") {
-          alert("Permission Denied: The 'Pro' image model requires a connected Google Account. Please check settings.");
+      if (e.message === "PERMISSION_DENIED_PRO_MODEL" || e.message === "PRO_MODEL_KEY_REQUIRED" || e.message === "PRO_MODEL_KEY_EXPIRED") {
+          const reason = e.message === "PRO_MODEL_KEY_EXPIRED" ? "Your session has expired." : "This high-quality model requires a connected Google Account.";
+          if (window.aistudio) {
+              if (confirm(`${reason} Would you like to connect now?`)) {
+                  handleConnectGoogle();
+              }
+          } else {
+              alert("Permission Denied: The 'Pro' image model requires a connected Google Account. Please check settings.");
+          }
       } else {
-          alert("Failed to generate alternative.");
+          alert(`Failed to generate alternative: ${e.message || "Unknown error"}`);
       }
     } finally {
       setGeneratingId(null);

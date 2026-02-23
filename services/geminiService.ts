@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Part, Content } from "@google/genai";
-import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from "../types";
+import { AuditResult, ConsultantLevel, MoodCardData, ChatMessage, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT, LocalizerResult, DEFAULT_LOCALIZER_PROMPT } from "../types";
 
 /**
  * Helper to determine MIME type from extension if browser fails
@@ -311,15 +311,48 @@ export const performCulturalAudit = async (
   }
 };
 
+/**
+ * Helper: Exponential Backoff Retry
+ */
+const withRetry = async <T>(fn: () => Promise<T>, maxRetries: number = 3): Promise<T> => {
+    let lastError: any;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            return await fn();
+        } catch (err: any) {
+            lastError = err;
+            const isNetworkError = err.message?.includes("xhr error") || err.message?.includes("fetch") || err.status === "UNKNOWN";
+            const isRateLimit = err.message?.includes("429") || err.toString().includes("429");
+            
+            if (isNetworkError || isRateLimit) {
+                const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                console.warn(`Retry ${i + 1}/${maxRetries} after ${Math.round(delay)}ms due to: ${err.message}`);
+                await new Promise(resolve => setTimeout(resolve, delay));
+                continue;
+            }
+            throw err;
+        }
+    }
+    throw lastError;
+};
+
 export const generateAlternativeImage = async (
   prompt: string, 
   apiKey: string, 
-  modelId: string
+  modelId: string,
+  referenceImage?: { base64: string, mimeType: string }
 ): Promise<string> => {
   const effectiveKey = getEffectiveApiKey(apiKey);
-  if (!effectiveKey) throw new Error("API Key is required");
+  
+  // Check if we need to prompt for a key for Pro models
+  if (modelId.includes('gemini-3-pro') && window.aistudio) {
+      const hasKey = await window.aistudio.hasSelectedApiKey();
+      if (!hasKey) {
+          throw new Error("PRO_MODEL_KEY_REQUIRED");
+      }
+  }
 
-  const ai = new GoogleGenAI({ apiKey: effectiveKey });
+  if (!effectiveKey && !window.aistudio) throw new Error("API Key is required");
 
   const imageConfig: any = {
       aspectRatio: "1:1",
@@ -329,49 +362,75 @@ export const generateAlternativeImage = async (
       imageConfig.imageSize = "1K";
   }
 
-  try {
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: imageConfig
-      }
-    });
-
-    const candidate = response.candidates?.[0];
-    if (!candidate || candidate.finishReason === 'SAFETY') {
-        throw new Error("Image generation blocked by safety filters.");
-    }
-
-    const parts = candidate.content?.parts;
-    let textFallback = "";
-
-    if (parts) {
-      for (const part of parts) {
-        if (part.inlineData && part.inlineData.data) {
-          return `data:image/png;base64,${part.inlineData.data}`;
-        }
-        if (part.text) {
-            textFallback += part.text;
-        }
-      }
-    }
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: effectiveKey });
     
-    if (textFallback) {
-        const shortError = textFallback.length > 50 ? textFallback.substring(0, 50) + "..." : textFallback;
-        throw new Error(`Model refused: ${shortError}`);
-    }
+    try {
+      const parts: Part[] = [];
+      
+      if (referenceImage) {
+          parts.push({
+              inlineData: {
+                  data: referenceImage.base64,
+                  mimeType: referenceImage.mimeType
+              }
+          });
+          parts.push({ text: `Using the provided image as a reference for the visual mechanic and artistic style, generate a new image based on this prompt: ${prompt}` });
+      } else {
+          parts.push({ text: prompt });
+      }
 
-    throw new Error("No image data found in response.");
-  } catch (error: any) {
-    console.error("Generation Error:", error);
-    if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
-        throw new Error("PERMISSION_DENIED_PRO_MODEL");
+      const response = await ai.models.generateContent({
+        model: modelId,
+        contents: {
+          parts: parts
+        },
+        config: {
+          imageConfig: imageConfig
+        }
+      });
+
+      const candidate = response.candidates?.[0];
+      if (!candidate || candidate.finishReason === 'SAFETY') {
+          throw new Error("Image generation blocked by safety filters.");
+      }
+
+      const responseParts = candidate.content?.parts;
+      let textFallback = "";
+
+      if (responseParts) {
+        for (const part of responseParts) {
+          if (part.inlineData && part.inlineData.data) {
+            return `data:image/png;base64,${part.inlineData.data}`;
+          }
+          if (part.text) {
+              textFallback += part.text;
+          }
+        }
+      }
+      
+      if (textFallback) {
+          const shortError = textFallback.length > 50 ? textFallback.substring(0, 50) + "..." : textFallback;
+          throw new Error(`Model refused: ${shortError}`);
+      }
+
+      throw new Error("No image data found in response.");
+    } catch (error: any) {
+      console.error("Generation Error Details:", error);
+      
+      // Handle specific "entity not found" error by resetting key state as per guidelines
+      if (error.message?.includes("Requested entity was not found")) {
+          throw new Error("PRO_MODEL_KEY_EXPIRED");
+      }
+
+      if (error.message?.includes("403") || error.toString().includes("403") || error.message?.includes("PERMISSION_DENIED")) {
+          throw new Error("PERMISSION_DENIED_PRO_MODEL");
+      }
+      
+      // Re-throw to let withRetry handle it or eventually fail
+      throw error;
     }
-    throw new Error(error.message || "Failed to generate image.");
-  }
+  });
 };
 
 export const consultCulturalAgent = async (
@@ -534,4 +593,105 @@ export const consultCulturalAgent = async (
       citedSources: citedSources,
       groundingMetadata: groundingMetadata
     };
+};
+
+export const localizeEffect = async (
+    beforeFile: { uri?: string, base64?: string, mimeType: string },
+    afterFile: { uri?: string, base64?: string, mimeType: string },
+    region: string,
+    knowledgeFiles: KnowledgeFile[],
+    apiKey: string,
+    modelId: string,
+    systemPrompt?: string,
+    effectDescription?: string,
+    emotionKeywords?: string,
+    useCases?: string
+): Promise<LocalizerResult> => {
+    const effectiveKey = getEffectiveApiKey(apiKey);
+    if (!effectiveKey) throw new Error("API Key is required");
+    
+    const ai = new GoogleGenAI({ apiKey: effectiveKey });
+    
+    const activeKnowledge = knowledgeFiles.filter(f => f.isActive);
+    const files = activeKnowledge.filter(f => f.sourceType === 'FILE' && isSupportedFileForGeneration(f.mimeType));
+    const links = activeKnowledge.filter(f => f.sourceType === 'LINK');
+
+    let ragInstructions = "";
+    if (activeKnowledge.length > 0) {
+        ragInstructions = `
+        CONTEXT FROM ATTACHED FILES & LINKS:
+        Use these sources to ensure cultural accuracy for the region.
+        ${links.length > 0 ? `External Links: ${links.map(l => l.name).join(", ")}` : ""}
+        `;
+    }
+
+    let promptText = systemPrompt || DEFAULT_LOCALIZER_PROMPT;
+    promptText = promptText.replace(/{{region}}/g, region);
+    promptText = promptText.replace(/{{effectDescription}}/g, effectDescription || "Not provided");
+    promptText = promptText.replace(/{{emotionKeywords}}/g, emotionKeywords || "Not provided");
+    promptText = promptText.replace(/{{useCases}}/g, useCases || "Not provided");
+    promptText = promptText.replace('{{ragInstructions}}', ragInstructions);
+
+    try {
+        const parts: Part[] = [];
+
+        files.forEach(file => {
+            if (file.uri && file.status === 'READY') {
+                parts.push({ 
+                    fileData: { 
+                        fileUri: file.uri, 
+                        mimeType: file.mimeType || getMimeTypeFromExtension(file.name)
+                    } 
+                });
+            }
+        });
+
+        // Add Before Image
+        if (beforeFile.uri) {
+            parts.push({ text: "ORIGINAL (BEFORE):" });
+            parts.push({ fileData: { fileUri: beforeFile.uri, mimeType: beforeFile.mimeType } });
+        } else if (beforeFile.base64) {
+            parts.push({ text: "ORIGINAL (BEFORE):" });
+            parts.push({ inlineData: { mimeType: beforeFile.mimeType, data: beforeFile.base64 } });
+        }
+
+        // Add After Image
+        if (afterFile.uri) {
+            parts.push({ text: "EFFECT (AFTER):" });
+            parts.push({ fileData: { fileUri: afterFile.uri, mimeType: afterFile.mimeType } });
+        } else if (afterFile.base64) {
+            parts.push({ text: "EFFECT (AFTER):" });
+            parts.push({ inlineData: { mimeType: afterFile.mimeType, data: afterFile.base64 } });
+        }
+
+        parts.push({ text: promptText });
+
+        const response = await ai.models.generateContent({
+            model: modelId,
+            contents: { parts: parts },
+            config: {
+                responseMimeType: "application/json",
+            }
+        });
+
+        if (!response.candidates || response.candidates.length === 0) {
+            throw new Error("The AI could not analyze this effect.");
+        }
+
+        let jsonText = response.text || "";
+        const jsonMatch = jsonText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) jsonText = jsonMatch[0];
+
+        const raw = JSON.parse(jsonText);
+        
+        return {
+            region: raw.region || region,
+            analysis: raw.analysis,
+            concepts: Array.isArray(raw.concepts) ? raw.concepts : []
+        };
+
+    } catch (error: any) {
+        console.error("Localization Error:", error);
+        throw error;
+    }
 };

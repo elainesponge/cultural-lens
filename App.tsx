@@ -1,11 +1,12 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { AppMode, AppSettings, AVAILABLE_MODELS, DEFAULT_SETTINGS, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT } from './types';
+import { AppMode, AppSettings, AVAILABLE_MODELS, DEFAULT_SETTINGS, KnowledgeFile, DEFAULT_AUDIT_PROMPT, DEFAULT_CONSULTANT_PROMPT, DEFAULT_LOCALIZER_PROMPT } from './types';
 import AuditView from './components/AuditView';
 import ConsultantView from './components/ConsultantView';
+import LocalizerView from './components/LocalizerView';
 import { uploadKnowledgeFile, testApiConnection } from './services/geminiService';
-import { LayoutTemplate, MessageSquareText, Settings as SettingsIcon, X, Key, Cpu, Image as ImageIcon, Save, Activity, Check, Loader2, FileCode, RotateCcw } from 'lucide-react';
+import { LayoutTemplate, MessageSquareText, Settings as SettingsIcon, X, Key, Cpu, Image as ImageIcon, Save, Activity, Check, Loader2, FileCode, RotateCcw, Sparkles } from 'lucide-react';
 
 function App() {
   const [mode, setMode] = useState<AppMode>(AppMode.AUDIT);
@@ -303,6 +304,30 @@ function App() {
                                      Required variables: <span className="font-mono bg-gray-100 px-1 rounded text-gray-600">{`{{audience}}`}</span>, <span className="font-mono bg-gray-100 px-1 rounded text-gray-600">{`{{modeInstructions}}`}</span>, <span className="font-mono bg-gray-100 px-1 rounded text-gray-600">{`{{ragInstructions}}`}</span>
                                 </div>
                              </div>
+
+                             {/* Localizer Prompt */}
+                             <div>
+                                <div className="flex justify-between items-end mb-1.5">
+                                    <label className="text-xs font-bold uppercase text-gray-400 flex items-center gap-1">
+                                        <FileCode size={12}/> Localizer System Prompt
+                                    </label>
+                                    <button 
+                                        onClick={() => setLocalSettings(prev => ({...prev, localizerSystemPrompt: DEFAULT_LOCALIZER_PROMPT}))}
+                                        className="text-[10px] text-gray-400 hover:text-excali-purple flex items-center gap-1"
+                                        title="Reset to Default"
+                                    >
+                                        <RotateCcw size={10} /> Reset
+                                    </button>
+                                </div>
+                                <textarea 
+                                    className="w-full p-3 border border-gray-200 rounded-lg bg-gray-50 font-mono text-xs h-40 focus:outline-none focus:border-excali-purple focus:ring-2 focus:ring-excali-purple/20 transition-all resize-y"
+                                    value={localSettings.localizerSystemPrompt}
+                                    onChange={e => setLocalSettings({...localSettings, localizerSystemPrompt: e.target.value})}
+                                />
+                                <div className="text-[10px] text-gray-400 mt-1">
+                                     Required variables: <span className="font-mono bg-gray-100 px-1 rounded text-gray-600">{`{{region}}`}</span>, <span className="font-mono bg-gray-100 px-1 rounded text-gray-600">{`{{ragInstructions}}`}</span>
+                                </div>
+                             </div>
                         </div>
                     )}
 
@@ -370,6 +395,12 @@ function App() {
             isActive={mode === AppMode.CONSULTANT} 
             onClick={() => setMode(AppMode.CONSULTANT)} 
           />
+          <NavIcon 
+            icon={<Sparkles size={24} />} 
+            label="Effect Localizer" 
+            isActive={mode === AppMode.LOCALIZER} 
+            onClick={() => setMode(AppMode.LOCALIZER)} 
+          />
         </nav>
 
         {/* Settings Button */}
@@ -401,6 +432,18 @@ function App() {
           </div>
           <div className={`w-full h-full ${mode === AppMode.CONSULTANT ? 'block' : 'hidden'}`}>
             <ConsultantView 
+                settings={settings}
+                knowledgeFiles={knowledgeFiles}
+                onUploadKnowledge={handleGlobalUpload}
+                onAddLink={handleGlobalAddLink}
+                onRemoveKnowledge={handleGlobalRemoveFile}
+                onToggleKnowledgeActive={handleToggleFileActive}
+                onToggleAllKnowledge={handleToggleAllFiles}
+                isUploadingKnowledge={isUploadingFile}
+            />
+          </div>
+          <div className={`w-full h-full ${mode === AppMode.LOCALIZER ? 'block' : 'hidden'}`}>
+            <LocalizerView 
                 settings={settings}
                 knowledgeFiles={knowledgeFiles}
                 onUploadKnowledge={handleGlobalUpload}

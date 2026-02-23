@@ -1,7 +1,8 @@
 
 export enum AppMode {
   AUDIT = 'AUDIT',
-  CONSULTANT = 'CONSULTANT'
+  CONSULTANT = 'CONSULTANT',
+  LOCALIZER = 'LOCALIZER'
 }
 
 export enum Sentiment {
@@ -87,6 +88,23 @@ export interface ChatSession {
   knowledgeFiles: KnowledgeFile[]; // Files attached to this session
 }
 
+export interface LocalizedConcept {
+  id: string;
+  title: string;
+  environmentalContext: string;
+  emotionalMotivation: string;
+  beforeVisualPrompt: string;
+  afterVisualPrompt: string;
+  demoImageUrl?: string;
+  demoBeforeImageUrl?: string;
+}
+
+export interface LocalizerResult {
+  concepts: LocalizedConcept[];
+  region: string;
+  analysis?: string;
+}
+
 // Shared Constants
 export const AUDIENCE_GROUPS = [
   { label: "US", value: ["United States"] },
@@ -105,12 +123,14 @@ export interface AppSettings {
   imageModel: string;
   auditSystemPrompt: string;
   consultantSystemPrompt: string;
+  localizerSystemPrompt: string;
 }
 
 export const AVAILABLE_MODELS = {
   general: [
     { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Fastest)' },
     { id: 'gemini-3-flash-preview', name: 'Gemini 3.0 Flash (Balanced)' },
+    { id: 'gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro (Advanced Reasoning)' },
     { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro (Intelligence)' }
   ],
   image: [
@@ -121,6 +141,10 @@ export const AVAILABLE_MODELS = {
 
 export const DEFAULT_AUDIT_PROMPT = `Analyze this image for cultural sensitivity specifically for these regions: {{regions}}.
 Identify specific visual elements (colors, symbols, gestures, text).
+
+**INCLUSIVITY & REPRESENTATION:**
+- Evaluate the representation of people. Is it gender-inclusive? Does it represent a diverse range of identities relevant to the region?
+- Flag any lack of diversity or gender bias as a "RISK".
 
 **TONE & STYLE:**
 - Speak like a friendly guide but be CONCISE.
@@ -159,6 +183,7 @@ Target Audience: {{audience}}.
 
 **YOUR MISSION:**
 - Answer questions about cultural elements (festivals, colors, symbols).
+- Provide advice that is gender-inclusive and representative of diverse identities within the target culture.
 - Be concise and direct. Avoid fluff.
 
 **TONE & STYLE:**
@@ -189,12 +214,61 @@ Target Audience: {{audience}}.
 
 IMPORTANT: Do not output the JSON block unless necessary.`;
 
+export const DEFAULT_LOCALIZER_PROMPT = `You are a Creative Localization Expert specializing in social media trends (TikTok, Instagram, Douyin).
+Your task is to analyze the provided "AI Effect" and localize it for a specific geographic region: {{region}}.
+
+**INPUTS PROVIDED:**
+- **Effect Description**: {{effectDescription}}
+- **Emotion Keywords**: {{emotionKeywords}}
+- **Use Cases**: {{useCases}}
+- **Visual Reference**: Before/After media provided as a *reference example* of the visual mechanic.
+
+**ANALYSIS STEP:**
+- **PRIORITY 1 (Textual Truth):** Use the provided Description, Emotions, and Use Cases as the absolute primary source of truth. The effect's purpose and "vibe" are defined here.
+- **PRIORITY 2 (Visual Mechanic):** Identify the core visual transformation style from the media (e.g., 3D felted texture, neon outlines, pixel art). This is the "look" to be adapted.
+- **PRIORITY 3 (Cultural Adaptation):** The subject and setting in the reference media are ONLY EXAMPLES. You MUST adapt the subject (ethnicity, fashion, gender, age) and the environment to be authentic and high-engagement for {{region}}. Do NOT strictly replicate the specific features of the person in the reference image.
+
+**GOAL:**
+Generate 3 distinct, culturally resonant concepts that adapt the visual mechanic for the local culture and platform-native aesthetics of {{region}}.
+
+**INCLUSIVITY & DIVERSITY MANDATE (CRITICAL):**
+- You MUST ensure gender inclusivity across the concepts.
+- Represent a diverse range of identities, body types, and local fashion styles authentic to {{region}}.
+
+**EACH CONCEPT MUST INCLUDE:**
+1. **Title**: A catchy, local social-media-friendly name.
+2. **Environmental Context**: A specific social setting in {{region}} where this effect would trend.
+3. **Emotional Motivation**: The specific "vibe" or "mood" that resonates with local youth, driven by the provided Emotion Keywords.
+4. **Before Visual Prompt**: A highly detailed prompt for an image generation model that describes the subject and setting *WITHOUT* the AI effect applied. It must be culturally authentic to {{region}}.
+5. **After Visual Prompt**: A highly detailed prompt for an image generation model that describes the *EXACT SAME* subject and setting as the "Before" prompt, but *WITH* the core visual mechanic (the transformation style) applied. It must align with the provided Use Cases.
+
+{{ragInstructions}}
+
+STRICT JSON OUTPUT FORMAT (Do NOT include markdown):
+{
+  "region": "{{region}}",
+  "analysis": "Briefly describe the core visual mechanic identified and the intended emotions/vibe. IMPORTANT: Do NOT describe the specific person or subject in the reference media (e.g., their ethnicity, hair, or clothing) unless it is a core part of the effect's mechanic.",
+  "concepts": [
+    {
+      "id": "1",
+      "title": "Concept Title",
+      "environmentalContext": "Description of environment...",
+      "emotionalMotivation": "Description of emotional driver...",
+      "beforeVisualPrompt": "Detailed prompt for the 'Before' state...",
+      "afterVisualPrompt": "Detailed prompt for the 'After' state (same subject/setting + effect)..."
+    },
+    ... (total 3 concepts)
+  ]
+}
+`;
+
 export const DEFAULT_SETTINGS: AppSettings = {
   apiKey: '',
   generalModel: 'gemini-2.5-flash',
   imageModel: 'gemini-2.5-flash-image',
   auditSystemPrompt: DEFAULT_AUDIT_PROMPT,
-  consultantSystemPrompt: DEFAULT_CONSULTANT_PROMPT
+  consultantSystemPrompt: DEFAULT_CONSULTANT_PROMPT,
+  localizerSystemPrompt: DEFAULT_LOCALIZER_PROMPT
 };
 
 // --- Type Augmentation for Environment & AI Studio ---
